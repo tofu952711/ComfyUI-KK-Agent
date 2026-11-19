@@ -1,20 +1,18 @@
-> **当前执行策略：不足32秒进入A；32至60秒进入B。** 第一框为共用用户要求，第二框为A反推规则。B另有分段规定和反推提示词规定：先由AI按B分段规定主动调用工具，工具通过FFmpeg实际裁出2—5段并校验；再在独立会话中使用B反推规定生成提示词。A/B规则上游独立，不回退。B两个规则框均须填写。超过60秒明确报错。
+# 示例工作流
 
-> **当前接口：image1—image10 + video1—video5。** 参考图与原片资料在A/B共用，编号不重排。B的set_video_segments工具必须成功返回实际成品；无有效工具成品会报错，不回退输出原片。成品使用H.264/AAC，转为VIDEO内存对象后可连接SaveVideo保存。A不输出视频，B未使用的VIDEO端口阻止下游执行。规则与原有思考等级保留旧工作流迁移。
+| 文件 | 用途 |
+| --- | --- |
+| [parallel_video_workflow.json](parallel_video_workflow.json) | 推荐在界面导入：分段视频保存与独立反推并行 |
+| [parallel_video_api.json](parallel_video_api.json) | 并行流程的 API 格式 |
+| [full_video_workflow.json](full_video_workflow.json) | 完整视频节点的串行流程 |
+| [full_video_api.json](full_video_api.json) | 串行流程的 API 格式 |
 
-# 完整视频反推示例
+导入后替换视频和参考图，填写自己的 API Key、接口地址、模型及协议。参考图为可选项，用途由本次用户要求说明。
 
-需要视频保存与反推并行时，使用「DSH 视频分析／B分段（并行入口）」：video1—video5接标准SaveVideo；「反推资料」接「DSH 独立反推」，其提示词输出再接SaveText。保存目录与格式由各SaveVideo决定，插件不自行落盘。载入已连接SaveVideo的旧完整视频工作流会自动迁移成这两条分支，保留原有规则、接口配置及SaveVideo设置。未使用的VIDEO分支自动阻止执行。
+不足 32 秒填写 A 的系统提示词；32—60 秒分别填写 B 分段规定和 B 反推规定。示例连接的独立文本节点规则为空，需要自行填写正文。规则框也支持直接填写或右键转为输入。
 
-提供原完整视频节点及新增的并行入口／独立反推节点。旧的提示词引擎、帧阵列拼图与独立Key节点已删除。
+并行流程中，`video1—video5` 接 SaveVideo，「反推资料」接 DSH 独立反推，后者输出提示词。SaveVideo 控制目录、前缀与格式；A 不输出视频，B 未使用的视频分支不执行。
 
-- full_video_workflow.json：在 ComfyUI 导入，替换视频、人物图和商品图，填写自己的接口地址、Key 与模型。
-- full_video_api.json：同一流程的 API 格式。
-- parallel_video_workflow.json：分段后标准SaveVideo与独立反推同时执行，包含五个可选视频保存分支。
-- parallel_video_api.json：并行流程的API格式。
+「保留音轨」控制 B 分段成品的音轨；本地 SenseVoice 模型目录在完整包中可留空。若导入后提示缺少 SaveText 等文本保存节点，可安装对应节点或换成自己已有的文本显示／保存节点。
 
-第一个文本框填写本次用户要求；系统提示词可在第二个文本框直接填写，也可连接独立文本节点。示例已连接 Text (Multiline)，其中规则为空，请自行粘贴规则正文。插件没有内置爆款裂变 Skill。
-
-本地 SenseVoice 模型目录留空会使用内置 models/sensevoice，声音工具使用 CPU。三个输出分别是提示词、分析证据、状态。
-
-「保留音轨 / keep_audio」默认开启。关闭会从video1—video5输出中移除音轨，完整原视频单段输出也适用；分析阶段仍读取原音频做转写与说话人识别。静音输出先无损去除音轨，再按AI方案切片，不以音量归零代替移除音轨。
+分享工作流前清空 Key 和不希望公开的规则。详细设置见 [使用说明](../docs/VIDEO-PROMPT.md)。
