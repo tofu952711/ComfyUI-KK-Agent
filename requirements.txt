@@ -1,0 +1,10 @@
+# Windows x64 portable ZIP already includes Python, SDK and native runtime.
+# Pillow, numpy, PyAV and aiohttp are supplied by current ComfyUI.
+# Local speech recognition uses sherpa-onnx and bundled models/sensevoice.
+# Optional speaker diarization reuses sherpa-onnx, with two deployment-time
+# weights prepared by scripts/setup_speaker_models.py; CPU is used for both models.
+# Linux/cloud source deployments install the matching official native runtime.
+deepseek-harness-sdk==0.2.2rc2; sys_platform != 'win32'
+deepseek-harness-runtime-bin==0.2.2rc2; sys_platform != 'win32'
+# Standard CPU speech runtime; no fixed version or accelerator dependency.
+sherpa-onnx

@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Runtime state — never published
+logs/
+*.log
+user/
+*.jsonl
+media/
+
+# Local machine configuration written by scripts/install.py
+config.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Do not publish a personal operator prompt pack
+prompt-inject.md
+
+# Reproducible portable binaries; included by package_standalone.py in release ZIP.
+vendor/windows-x64/
+vendor/ffmpeg/windows-x64/*.exe
+
+# Public speaker weights are installed by scripts/setup_speaker_models.py.
+models/speaker-diarization/
+
+# Large portable assets are distributed through GitHub Releases.
+models/**/*.onnx
+*.zip
+*.zip.sha256

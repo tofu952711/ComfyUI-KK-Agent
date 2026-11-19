@@ -1,0 +1,141 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "请选择你的视频.mp4"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "请选择人物图.jpg"
+    }
+  },
+  "3": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "请选择商品图.png"
+    }
+  },
+  "4": {
+    "class_type": "DSH_VideoSegments",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ],
+      "api_key": "",
+      "base_url": "https://api.zdjapi.com/v1",
+      "model": "gpt-6.1-sol",
+      "requirement": "按系统提示词分析原视频，image1、image2的用途在此说明。时长分段由插件策略执行。",
+      "timeout_s": 900,
+      "max_tokens": 32768,
+      "asr_model_dir": "",
+      "api_protocol": "openai-completions",
+      "rules_text": [
+        "6",
+        0
+      ],
+      "image1": [
+        "2",
+        0
+      ],
+      "image2": [
+        "3",
+        0
+      ],
+      "keep_audio": true,
+      "segment_rules_text": "",
+      "chain_b_reverse_rules_text": ""
+    }
+  },
+  "5": {
+    "class_type": "SaveText",
+    "inputs": {
+      "text": [
+        "12",
+        0
+      ],
+      "filename_prefix": "DSH/full_video_prompt",
+      "format": "txt"
+    }
+  },
+  "6": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": ""
+    },
+    "_meta": {
+      "title": "反推规则：粘贴外部规则正文"
+    }
+  },
+  "7": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "4",
+        3
+      ],
+      "filename_prefix": "video/ComfyUI",
+      "format": "mp4",
+      "format.codec": "h264"
+    }
+  },
+  "8": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "4",
+        4
+      ],
+      "filename_prefix": "video/ComfyUI",
+      "format": "mp4",
+      "format.codec": "h264"
+    }
+  },
+  "9": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "4",
+        5
+      ],
+      "filename_prefix": "video/ComfyUI",
+      "format": "mp4",
+      "format.codec": "h264"
+    }
+  },
+  "10": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "4",
+        6
+      ],
+      "filename_prefix": "video/ComfyUI",
+      "format": "mp4",
+      "format.codec": "h264"
+    }
+  },
+  "11": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "4",
+        7
+      ],
+      "filename_prefix": "video/ComfyUI",
+      "format": "mp4",
+      "format.codec": "h264"
+    }
+  },
+  "12": {
+    "class_type": "DSH_VideoReverse",
+    "inputs": {
+      "context": [
+        "4",
+        8
+      ]
+    }
+  }
+}

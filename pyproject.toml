@@ -1,0 +1,28 @@
+[project]
+name = "comfyui-dsh-bridge"
+version = "0.8.5"
+description = "Portable DeepSeek Harness agent for ComfyUI; bundled Windows x64 runtime, no installation step."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+authors = [{ name = "sxxzwbl" }]
+keywords = ["comfyui", "deepseek", "harness", "minimax", "h3", "prompt-engineering"]
+classifiers = [
+    "Environment :: Plugins",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Homepage = "https://github.com/sxxzwbl/ComfyUI-DSH-Bridge"
+Issues = "https://github.com/sxxzwbl/ComfyUI-DSH-Bridge/issues"
+
+# Read by ComfyUI-Manager to decide whether this checkout is installable and what
+# to show in the node list. Not a build system: the plugin runs from source.
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI-DSH-Bridge Standalone"
+Icon = ""
+Models = []
