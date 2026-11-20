@@ -213,7 +213,8 @@ async def run():
         print("REAL_COMFY_CODEZ_RESPONSES_EXACT_MEDIA_TOOL_ROUND_OK")
     finally:
         gateway.close()
-    # B: real AI tool calls must create clips before independent reverse starts.
+    # B: real AI tool calls must create clips before concurrent reverse starts.
+    from b_parallel_gateway import BParallelGateway
     class UnreadableInput:
         def __str__(self):
             raise AssertionError("B must not inspect A rules")
@@ -244,15 +245,15 @@ async def run():
     for protocol,ranges,keep_audio in [
             ("openai-completions",[{"start":0,"end":10},{"start":10,"end":21},{"start":21,"end":32}],False),
             ("codez",[{"start":0,"end":15},{"start":15,"end":32}],True)]:
-        gateway=(PreparedGateway(segments=ranges,final_texts=["分段依据", "B逐段反推完成"])
-                 if protocol=="openai-completions" else ResponsesGateway(media=True,segments=ranges))
+        gateway=BParallelGateway(ranges, protocol)
         homes=[]
         outputs=[]
         preparations=[]
-        original_prepare=vars(full)["prepare_chain_media"]
-        def track_preparation(cls,*args):
+        from dsh_comfy_smoke.dsh_bridge import b_video_preparation as b_preparation
+        original_prepare=b_preparation.prepare_b_chain_media
+        def track_preparation(*args):
             preparations.append(args[2]["chain"])
-            return original_prepare.__func__(cls,*args)
+            return original_prepare(*args)
         def stage_observer(stage,current_bridge,output):
             homes.append(Path(current_bridge.cfg["dsh_home"]))
             outputs.append(output)
@@ -262,7 +263,7 @@ async def run():
                 assert all((output/name).is_file() for name in plan["files"])
                 assert len(gateway.requests)==2 # Tool and its completion; reverse has not run.
         try:
-            full.prepare_chain_media=classmethod(track_preparation)
+            b_preparation.prepare_b_chain_media=track_preparation
             result=await full.execute(video=b_video,api_key="local-only",base_url=gateway.url,
                 model="gpt-6.1-sol",requirement=user,rules_text=UnreadableInput(),
                 segment_rules_text=segment_rules,chain_b_reverse_rules_text=reverse_rules,
@@ -278,26 +279,28 @@ async def run():
             assert records["reference_image_slots"]==[2,10]
             assert records["media_input"]["sent_to_ai"]
             assert records["media_input"]["video_sheet_images"]+2>20
-            assert len(gateway.requests)==3
-            for index,body in enumerate(gateway.requests):
-                phase="segment" if index<2 else "reverse"
+            assert len(gateway.requests)==4+2*len(ranges)
+            assert len(gateway.review_requests)==1
+            assert records["parallel_reverse"]["review"]["status"]=="approved"
+            assert gateway.peak_children==len(ranges) and not gateway.errors, gateway.errors
+            assert records["parallel_reverse"]["agent_count"]==len(ranges)
+            for phase,bodies in [("segment",gateway.segment_requests),
+                                 ("reverse",[body for _,body in gateway.worker_requests])]:
                 expected=segment_rules if phase=="segment" else reverse_rules
-                if protocol=="codez":
-                    assert body["instructions"]==expected
-                    assert body["reasoning"]["effort"]=="medium"
-                    texts=[b["text"] for m in body["input"] if m.get("role")=="user" for b in m["content"] if b["type"]=="input_text"]
-                    names=[t["name"] for t in body["tools"]]
-                    sent_images=[b for m in body["input"] if m.get("role")=="user" for b in m["content"] if b["type"]=="input_image"]
-                else:
-                    assert [m["content"] for m in body["messages"] if m["role"]=="system"]==[expected]
-                    assert body["reasoning_effort"]=="medium"
-                    texts=[b["text"] for m in body["messages"] if m["role"]=="user" for b in m["content"] if b["type"]=="text"]
-                    names=[t["function"]["name"] for t in body["tools"]]
-                    sent_images=[b for m in body["messages"] if m["role"]=="user" for b in m["content"] if b["type"]=="image_url"]
-                assert len(sent_images)==records["media_input"]["video_sheet_images"]+2
-                assert texts==[user,records["stage_media_evidence"][phase]]
-                assert any(n.endswith("set_video_segments") for n in names)==(phase=="segment")
-                assert (reverse_rules if phase=="segment" else segment_rules) not in json.dumps(body,ensure_ascii=False)
+                for body in bodies:
+                    if protocol=="codez":
+                        assert body["instructions"]==expected
+                        assert body["reasoning"]["effort"]=="medium"
+                        texts=[b["text"] for m in body["input"] if m.get("role")=="user" for b in m["content"] if b["type"]=="input_text"]
+                        names=[t["name"] for t in body["tools"]]
+                    else:
+                        assert [m["content"] for m in body["messages"] if m["role"]=="system"]==[expected]
+                        assert body["reasoning_effort"]=="medium"
+                        texts=[b["text"] for m in body["messages"] if m["role"]=="user" for b in m["content"] if b["type"]=="text"]
+                        names=[t["function"]["name"] for t in body["tools"]]
+                    assert texts[0].startswith(user)
+                    assert any(n.endswith("set_video_segments") for n in names)==(phase=="segment")
+                    assert (reverse_rules if phase=="segment" else segment_rules) not in json.dumps(body,ensure_ascii=False)
             assert len(records["segment_agent_tool_calls"])==1
             for index,segment in enumerate(ranges):
                 clip=result.result[3+index]
@@ -310,18 +313,19 @@ async def run():
             for phase,file in records["request_audit_files"].items():
                 audit=[json.loads(line) for line in Path(file).read_text(encoding="utf-8").splitlines()]
                 outgoing=[r for r in audit if r["stage"]=="outgoing_request"]
-                assert len(outgoing)==(2 if phase=="segment" else 1)
+                assert len(outgoing)==(1 if phase in ("coordinator","review") else 2)
                 assert all(r["system_exact"] and r["user_exact"] and r["media_evidence_exact"] for r in outgoing)
-            print("REAL_COMFY_B_AI_TOOL_CUTS_THEN_INDEPENDENT_REVERSE_OK",protocol,len(ranges))
+            print("REAL_COMFY_B_AI_CUTS_THEN_CONCURRENT_SEGMENT_AGENTS_OK",protocol,len(ranges))
         finally:
-            full.prepare_chain_media=original_prepare
+            b_preparation.prepare_b_chain_media=original_prepare
             gateway.close()
     # A textual claim of segmentation cannot count as a successful cut.
     for ranges,final_texts,error in [
             (None,["我已经分段了"],"未成功调用"),
             ([{"start":0,"end":10},{"start":11,"end":32}],["plan"],"未成功调用"),
-            ([{"start":0,"end":15},{"start":15,"end":32}],["分段完成", ""],"未返回反推提示词")]:
-        gateway=PreparedGateway(segments=ranges,final_texts=final_texts)
+            ([{"start":0,"end":15},{"start":15,"end":32}],["分段完成", ""],"失败段号")]:
+        gateway=(BParallelGateway(ranges,fail_segment=2) if error=="失败段号" else
+                 PreparedGateway(segments=ranges,final_texts=final_texts))
         try:
             await full.execute(video=b_video,api_key="local-only",base_url=gateway.url,
                 model="gpt-6.1-sol",requirement=user,rules_text=UnreadableInput(),

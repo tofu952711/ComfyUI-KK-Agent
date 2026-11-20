@@ -39,6 +39,7 @@ folder_paths.set_temp_directory(str(DATA/"previews"))
 import nodes
 from execution import PromptExecutor,CacheType,validate_prompt
 from test_video_preparation import PreparedGateway
+from b_parallel_gateway import BParallelGateway
 from dsh_stage_scheduler.dsh_bridge.ffmpeg_segments import executables
 
 source=DATA/"source.mp4"
@@ -91,12 +92,11 @@ class CheckedReverse(original_reverse):
         events.append({"event":"reverse_finished","time":time.monotonic()})
         return result
 
-def on_request(body,index):
-    if index==3:
-        assert saved.wait(15), "Comfy scheduler did not save while reverse was pending"
+def on_coordinator():
+    assert saved.wait(15), "Comfy scheduler did not save while reverse was pending"
 
-gateway=PreparedGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
-    final_texts=["分段完成","" if args.reverse_fails else "反推完成"],on_request=on_request)
+gateway=BParallelGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
+    fail_segment=2 if args.reverse_fails else None,on_coordinator=on_coordinator)
 nodes.NODE_CLASS_MAPPINGS.update(pkg.NODE_CLASS_MAPPINGS)
 nodes.NODE_CLASS_MAPPINGS.update(SchedulerSource=Source,SaveVideo=CheckedSaveVideo,DSH_VideoReverse=CheckedReverse)
 # Match server discovery order: the original node is inspected before its subclass.
@@ -129,7 +129,9 @@ async def run():
     await executor.execute_async(graph,"scheduler-concurrency-test",execute_outputs=["reverse","save1","save2"])
     assert executor.success == (not args.reverse_fails),executor.status_messages
     assert saved.is_set() and reverse_done.is_set()
-    assert len(gateway.requests)==3
+    assert len(gateway.requests)==(7 if args.reverse_fails else 8)
+    assert len(gateway.review_requests)==(0 if args.reverse_fails else 1)
+    assert gateway.peak_children==2 and not gateway.errors, gateway.errors
     assert not list((DATA/"output").glob("video/DSH/**/*")), "plugin must not choose/save any output path"
     assert len(list((DATA/"output").glob("chosen-by-node/*.mp4")))==2
     print("REAL_COMFY_SCHEDULER_STOCK_SAVEVIDEO_OVERLAPS_REVERSE_OK",json.dumps(events))

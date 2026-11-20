@@ -70,7 +70,8 @@ def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
         audit_dir = bridge_data_dir() / "request-audit"
         audit_dir.mkdir(parents=True, exist_ok=True)
         audits = {phase: audit_dir / f"{speed.run_id}-b-{phase}.jsonl" for phase in ("segment", "reverse")}
-        output, report, slots, refs, sheets, media_text = node.prepare_chain_media(
+        from .b_video_preparation import prepare_b_chain_media
+        output, report, slots, refs, sheets, media_text = prepare_b_chain_media(
             segment_bridge.cfg, video, routing, asr_model_dir, image_values)
         tools = MediaTools(output.parent / "source-video.mp4", output, Path(segment_bridge.cfg["media_model_dir"]))
         tools._write_json("duration_policy.json", {**routing, "phase": "segment",
@@ -113,53 +114,56 @@ def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
             [{"video": f"video{i}", **item} for i, item in enumerate(video_record["segments"], 1)], ensure_ascii=False)
         if segment_answer["text"].strip():
             reverse_media += "\n分段阶段返回的依据（分析资料）：\n" + segment_answer["text"]
-        with workflow_bridge(api_key, base_url, model, timeout_s, api_protocol,
-                max_tokens=max_tokens, reasoning_effort=reasoning_effort, stream_usage=stream_usage) as reverse_bridge:
-            reverse_bridge.cfg["media_mcp"] = segment_bridge.cfg["media_mcp"]
-            configure_stage(reverse_bridge, speed, audits["reverse"], reverse_rules,
-                            requirement, reverse_media, "reverse", images)
-            if observer:
-                observer("segmented", reverse_bridge, output)
-            speed.phase = "reverse"
-            print(f"[DSH] 链路B：工具已切出{video_record['count']}段，正在使用B反推规定", flush=True)
-            reverse_started = time.monotonic()
-            try:
-                answer = reverse_bridge.ask(reverse_bridge.session_id("chain-b-reverse"),
-                    requirement + "\n\n" + reverse_media, images, timeout=timeout_s, on_progress=observe)
-            except RuntimeError as exc:
-                if "EMPTY_RESPONSE" in str(exc) or getattr(exc, "code", "") == "empty_response":
-                    raise RuntimeError("链路B已完成视频分段，但AI未返回反推提示词；请检查B反推规定或接口响应") from exc
-                raise
-            finished = time.monotonic()
-            if not answer["text"].strip():
-                raise RuntimeError("链路B已完成视频分段，但AI未返回反推提示词；请查看接口响应或调整B反推规定")
-            calls = lambda result: [e["data"]["name"] for e in result["events"] if e.get("type") == "tool/call"]
-            records = evidence(output)
-            records.update({"chain": "B", "chain_status": "completed", "ai_called": True,
-                "request_audit_files": {k: str(v) for k, v in audits.items()},
-                "reference_image_slots": slots,
-                "media_input": {"prepared": True, "sent_to_ai": True, "text": media_text,
-                    "reference_images": len(refs), "video_sheet_images": len(sheets)},
-                "stage_media_evidence": {"segment": segment_media, "reverse": reverse_media},
-                "video_outputs": video_record,
-                "segment_agent_tool_calls": calls(segment_answer), "agent_tool_calls": calls(answer),
-                "segment_usage": segment_answer.get("usage"), "usage": answer.get("usage"),
-                "finish_reason": answer.get("finish_reason"), "agent_progress": progress,
-                "reasoning_effort": {"selected": reasoning_effort,
-                    "requested": None if reasoning_effort == "auto" else reasoning_effort},
-                "token_speed": {**speed.snapshot(), "status": "completed"},
-                "rules": {phase: {"characters": len(text),
-                    "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
-                    for phase, text in (("segment", segment_rules), ("reverse", reverse_rules))},
-                "timings": {"preparation_seconds": round(prepared_at - started, 3),
-                    "segment_agent_and_tools_seconds": round(segmented_at - prepared_at, 3),
-                    "video_encoding_seconds": round(sum(video_record["encoding_seconds"]), 3),
-                    "reverse_agent_seconds": round(finished - reverse_started, 3),
-                    "total_seconds": round(finished - started, 3)}})
-            if observer:
-                observer("finished", reverse_bridge, output)
-            return (answer["text"], json.dumps(records, ensure_ascii=False, indent=2),
-                    f"ok：链路B已分段{video_record['count']}段并完成反推", *videos)
+        if observer:
+            observer("segmented", segment_bridge, output)
+        from .b_parallel_reverse import run_parallel_reverse
+        reverse_started = time.monotonic()
+        text, parallel, reverse_audits = run_parallel_reverse(
+            api_key=api_key, base_url=base_url, model=model, timeout_s=timeout_s,
+            max_tokens=max_tokens, api_protocol=api_protocol, reasoning_effort=reasoning_effort,
+            stream_usage=stream_usage, requirement=requirement, reverse_rules=reverse_rules,
+            output=output, report=report, slots=slots, refs=refs, media_text=media_text,
+            segment_answer=segment_answer, video_record=video_record,
+            media_mcp=segment_bridge.cfg["media_mcp"], speed=speed,
+            configure_stage=configure_stage, audit_dir=audit_dir, observe=observe)
+        audits.pop("reverse", None)
+        audits.update({key: Path(value) for key, value in reverse_audits.items()})
+        finished = time.monotonic()
+        calls = lambda result: [e["data"]["name"] for e in result["events"] if e.get("type") == "tool/call"]
+        records = evidence(output)
+        records.update({"chain": "B", "chain_status": "completed", "ai_called": True,
+            "request_audit_files": {k: str(v) for k, v in audits.items()},
+            "reference_image_slots": slots,
+            "media_input": {"prepared": True, "sent_to_ai": True, "text": media_text,
+                "reference_images": len(refs), "video_sheet_images": len(sheets)},
+            "stage_media_evidence": {"segment": segment_media, "reverse": reverse_media},
+            "video_outputs": video_record, "parallel_reverse": parallel,
+            "segment_agent_tool_calls": calls(segment_answer),
+            "agent_tool_calls": [call for child in parallel["segments"] for call in child["tool_calls"]],
+            "segment_usage": segment_answer.get("usage"),
+            "usage": {"coordinator": parallel["coordinator"]["usage"],
+                      "review": parallel["review"]["usage"],
+                      "segments": [child["usage"] for child in parallel["segments"]]},
+            "finish_reason": "completed", "agent_progress": progress,
+            "reasoning_effort": {"selected": reasoning_effort,
+                "requested": None if reasoning_effort == "auto" else reasoning_effort},
+            "token_speed": {**speed.snapshot(), "status": "completed"},
+            "rules": {phase: {"characters": len(value),
+                "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest()}
+                for phase, value in (("segment", segment_rules), ("reverse", reverse_rules))},
+            "timings": {"preparation_seconds": round(prepared_at - started, 3),
+                "segment_agent_and_tools_seconds": round(segmented_at - prepared_at, 3),
+                "video_encoding_seconds": round(sum(video_record["encoding_seconds"]), 3),
+                "reverse_coordinator_seconds": parallel["coordinator"]["seconds"],
+                "reverse_parallel_seconds": parallel["parallel_wall_seconds"],
+                "reverse_review_seconds": parallel["review"]["seconds"],
+                "reverse_agent_seconds": round(finished - reverse_started, 3),
+                "total_seconds": round(finished - started, 3)}})
+        if observer:
+            observer("finished", segment_bridge, output)
+        return (text, json.dumps(records, ensure_ascii=False, indent=2),
+                f"ok：链路B已分段{video_record['count']}段，{parallel['agent_count']}个子智能体并发反推，主AI最终复核通过", *videos)
+
 
 
 def run_chain_b(*args, **kwargs):
