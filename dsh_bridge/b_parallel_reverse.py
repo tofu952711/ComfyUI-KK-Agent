@@ -14,7 +14,7 @@ from .media_workflow import evidence as read_evidence
 from .paths import bridge_data_dir
 from .video_preparation import prepared_images, prepared_evidence_text
 from .workflow import workflow_bridge
-from .b_review import REVIEW_RULES, parse_review, apply_review, dialogue_timing_hints
+from .b_review import REVIEW_RULES, parse_review, apply_review
 
 SHARED_FIELDS = ("全片内容概要", "人物与服装", "商品与适配", "场景与光线", "声音与说话人", "跨段衔接")
 COORDINATOR_RULES = """你是B链路的视频反推主AI。视频已经实际分段，不得重新分段。
@@ -112,7 +112,7 @@ def merge_results(results, segments):
         if result.get("segment_index") != index:
             raise RuntimeError("B子任务段号与实际分段顺序不一致")
         parts.append(f"## 第{index}段提示词｜原视频{segment['start']:.3f}—{segment['end']:.3f}秒，局部时间归零\n\n" + result["text"].strip())
-    return "\n\n".join(parts)
+    return "|\n".join(parts)
 
 
 def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api_protocol,
@@ -234,10 +234,9 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
         transcript = json.loads((output / "transcript.json").read_text(encoding="utf-8"))
         materials = prepared_evidence_text(review_report, shots, transcript, slots)
         payload = {"actual_segments": segments, "shared_context": contract,
-                   "export_keep_audio": video_record.get("keep_audio"),
-                   "note": "导出保留音轨设置与生成视频声音设计不同；只可局部修正文稿，不得更改实际分段。",
+                   "note": "只复核人物商品声线场景一致性，以及跨段动作衔接。",
                    "drafts": [{"segment_index": r["segment_index"], "segment": r["segment"],
-                               "text": r["text"], "dialogue_timing_hints": dialogue_timing_hints(r["text"]),
+                               "text": r["text"],
                                "verified_evidence": {k: v for k, v in r["analysis_evidence"].items()
                                    if k in ("speaker_evidence.json", "tool_activity")}}
                               for r in results]}
@@ -299,7 +298,7 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
         draft_text = merge_results(results, segments)
         (result_dir / "draft-prompts.txt").write_text(draft_text, encoding="utf-8")
         status("reviewing")
-        print("[DSH] B子任务全部完成，主AI正在最终复核跨段一致性、时间轴与对白", flush=True)
+        print("[DSH] B子任务全部完成，主AI正在复核人物商品声线场景一致性与跨段动作衔接", flush=True)
         review_future = pool.submit(final_review, contract)
         all_futures.append(review_future)
         for done in await_futures([review_future], control):

@@ -69,6 +69,12 @@ def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp
         assert len(audits) == count + 2
         assert len(gateway.review_requests) == 1
         assert record["review"]["status"] == "approved"
+        assert set(record["review"]["checks"]) == set(CHECKS)
+        review_body = gateway.review_requests[0]
+        review_system = (review_body["instructions"] if protocol == "codez" else next(
+            m["content"] for m in review_body["messages"] if m["role"] == "system"))
+        assert review_system == module.REVIEW_RULES
+        assert "dialogue_timing_hints" not in json.dumps(review_body)
         assert all(r["reviewed"] for r in record["segments"])
         assert any(r.get("b_agent_role") == "reviewer" and r["phase"] == "review" for r in requests)
         for index, body in gateway.worker_requests:
