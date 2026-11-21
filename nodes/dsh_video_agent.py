@@ -43,7 +43,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                                     placeholder="在此粘贴系统提示词，例如原 SKILL.md 正文；也可转为输入连接文本节点。",
                                     tooltip="第二个文本框：作为模型系统提示词发送。插件不再内置爆款裂变；右键转为输入后可连接外部文本节点。"),
                     io.Boolean.Input("keep_audio", optional=True, default=True, display_name="保留音轨",
-                                     tooltip="控制链路B分段工具是否保留原音轨。链路A不输出视频。"),
+                                     tooltip="控制链路B分段工具是否保留原音轨。分流入口的链路A从video1直通原视频及其音轨，导出音频由下游节点控制。"),
                     io.String.Input("segment_rules_text", optional=True, multiline=True, default="", lazy=True,
                                     display_name="链路B：分段规定",
                                     placeholder="链路B：在此填写视频分段规定，AI将按此规定调用工具实际裁切。",
@@ -127,6 +127,23 @@ class DSH_FullVideoAgent(io.ComfyNode):
     def run_chain_a(cls, video, routing, api_key, base_url, model, requirement,
                     rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
                     reasoning_effort, stream_usage, observer, image_values):
+        stages = cls.iter_chain_a(video, routing, api_key, base_url, model, requirement,
+            rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
+            reasoning_effort, stream_usage, observer, image_values)
+        try:
+            next(stages)
+            try:
+                next(stages)
+            except StopIteration as finished:
+                return finished.value
+            raise RuntimeError("链路A反推阶段未正确结束")
+        finally:
+            stages.close()
+
+    @classmethod
+    def iter_chain_a(cls, video, routing, api_key, base_url, model, requirement,
+                     rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
+                     reasoning_effort, stream_usage, observer, image_values, *, publish_video=False):
         if not isinstance(rules_text, str) or not rules_text.strip():
             raise ValueError("请在第二个文本框「系统提示词（原Skill正文）」填写反推规则，或转为输入连接文本节点")
         from ..dsh_bridge.token_speed import SpeedRun
@@ -169,6 +186,15 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 "video_sheet_images": len(sheets), "total_images": len(refs) + len(sheets),
                 "frame_coverage": report.get("coverage", {})}
             audit_file.write_text(json.dumps(prepared_record, ensure_ascii=False) + "\n", encoding="utf-8")
+            # Preparation has copied the source into this job's private workspace.
+            # Only now release the original VIDEO to downstream consumers: their
+            # decoding/seeking cannot race with staging a shared file-like source.
+            video_outputs = (video, *[ExecutionBlocker(None) for _ in range(4)]) if publish_video else tuple(
+                ExecutionBlocker(None) for _ in range(5))
+            yield ("", json.dumps({"chain": "A", "chain_status": "prepared",
+                   "video_outputs": {"count": 1 if publish_video else 0,
+                                     "plan_origin": "chain_a_original_video", "split_required": False}}, ensure_ascii=False),
+                   "链路A原视频已就绪；video1可直接处理或保存，提示词由独立反推节点输出", *video_outputs)
             speed.phase = 'reverse'
             before_agent = time.monotonic()
             answer = bridge.ask(bridge.session_id("full-video"), requirement + "\n\n" + media_text, refs + sheets,
@@ -188,6 +214,9 @@ class DSH_FullVideoAgent(io.ComfyNode):
             records["video_outputs"] = {"count": 0, "segments": [], "ai_plan_submitted": False,
                 "plan_origin": "chain_a_no_output", "encoding_seconds": [],
                 "storage": "none; no VIDEO output for chain A"}
+            if publish_video:
+                records["video_outputs"].update(count=1, plan_origin="chain_a_original_video",
+                    split_required=False, storage="original VIDEO passed through video1; saving is handled by downstream nodes")
             records["output_compliance"] = compliance
             records["reasoning_effort"] = {"selected": reasoning_effort,
                 "requested": None if reasoning_effort == "auto" else reasoning_effort}
@@ -212,4 +241,4 @@ class DSH_FullVideoAgent(io.ComfyNode):
             if observer:
                 observer("finished", bridge, output)
             return (answer["text"], json.dumps(records, ensure_ascii=False, indent=2), status,
-                    *[ExecutionBlocker(None) for _ in range(5)])
+                    *video_outputs)

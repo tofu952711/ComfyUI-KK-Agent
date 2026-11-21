@@ -135,7 +135,7 @@ async def run():
     assert not list((DATA/"output").glob("video/DSH/**/*")), "plugin must not choose/save any output path"
     assert len(list((DATA/"output").glob("chosen-by-node/*.mp4")))==2
     print("REAL_COMFY_SCHEDULER_STOCK_SAVEVIDEO_OVERLAPS_REVERSE_OK",json.dumps(events))
-    # The staged A route passes through the reverse node without another call.
+    # A releases its original video before the single deferred inference call.
     if not args.reverse_fails:
         a_gateway=PreparedGateway(final_texts=["A只反推一次"])
         try:
@@ -149,8 +149,11 @@ async def run():
             a_result=await stage.execute(video=a_video,api_key="local-only",base_url=a_gateway.url,
                 model="gpt-6.1-sol",api_protocol="openai-completions",requirement="A用户要求",
                 rules_text="A规则",segment_rules_text=object(),chain_b_reverse_rules_text=object(),timeout_s=60)
+            assert a_result.result[3] is a_video
+            assert not a_gateway.requests
             passed=await original_reverse.execute(a_result.result[8])
-            assert passed.result[0]==a_result.result[0]=="A只反推一次"
+            assert a_result.result[0]=="" and passed.result[0]=="A只反推一次"
+            assert (await original_reverse.execute(a_result.result[8])).result[0]=="A只反推一次"
             assert len(a_gateway.requests)==1
             print("STAGED_A_RULES_ISOLATED_NO_REPEATED_AI_OK")
         finally:

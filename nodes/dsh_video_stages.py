@@ -30,14 +30,14 @@ class VideoJob:
             if self._result is not None:
                 return self._result
             if self._stages is None:
-                raise RuntimeError("分段任务已释放，请重新执行前面的分段节点")
+                raise RuntimeError("反推任务已释放，请重新执行前面的入口节点")
             try:
                 try:
                     next(self._stages)
                 except StopIteration as finished:
                     self._result = finished.value
                     return self._result
-                raise RuntimeError("链路B反推阶段未正确结束")
+                raise RuntimeError("反推阶段未正确结束")
             except BaseException as exc:
                 self._error = str(exc)
                 raise
@@ -64,7 +64,7 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
         schema = super().define_schema()
         schema.node_id = "DSH_VideoSegments"
         schema.display_name = "KK agent 视频反推"
-        schema.description = ("不足32秒执行A反推；32至60秒只执行B的AI工具分段。"
+        schema.description = ("不足32秒走A：video1输出未分段原视频，独立反推与下游打码/保存并行；32至60秒执行B的AI工具分段。"
             "video1—video5连接SaveVideo，反推资料连接DSH独立反推节点；两条分支可同时执行。"
             "本节点不自行保存视频，不指定保存目录。原有规则框和接口设置保持独立。")
         schema.outputs.append(ChainContext.Output(display_name="反推资料"))
@@ -82,13 +82,14 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
         print(f"[DSH] 并行入口：{routing['duration_seconds']}秒 → 链路{routing['chain']}", flush=True)
         images = (image1,image2,image3,image4,image5,image6,image7,image8,image9,image10)
         if routing["chain"] == "A":
-            result = await asyncio.to_thread(cls.run_chain_a, video, routing,
+            stages = cls.iter_chain_a(video, routing,
                 api_key,base_url,model,requirement,rules_text,timeout_s,max_tokens,
-                asr_model_dir,api_protocol,reasoning_effort,stream_usage,_observer,images)
-            return io.NodeOutput(*result, VideoJob(result=result))
-        stages = iter_chain_b(cls, video,routing,api_key,base_url,model,requirement,
-            segment_rules_text,chain_b_reverse_rules_text,timeout_s,max_tokens,
-            asr_model_dir,api_protocol,reasoning_effort,stream_usage,keep_audio,_observer,images)
+                asr_model_dir,api_protocol,reasoning_effort,stream_usage,_observer,images,
+                publish_video=True)
+        else:
+            stages = iter_chain_b(cls, video,routing,api_key,base_url,model,requirement,
+                segment_rules_text,chain_b_reverse_rules_text,timeout_s,max_tokens,
+                asr_model_dir,api_protocol,reasoning_effort,stream_usage,keep_audio,_observer,images)
         try:
             result = await asyncio.to_thread(next, stages)
         except BaseException:
@@ -102,7 +103,7 @@ class DSH_VideoReverse(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(node_id="DSH_VideoReverse", display_name="DSH 独立反推（与保存并行）",
             category="DSH Bridge", is_output_node=True,
-            description="接收并行入口的反推资料。B按自己的反推规定执行，期间SaveVideo可独立保存分段；A直接传递已完成的结果。保存路径由SaveVideo节点决定。",
+            description="接收入口的反推资料。A按A规则反推原片，B按B规则反推分段；两者均可与下游人脸处理及视频保存并行。保存路径由保存节点决定。",
             inputs=[ChainContext.Input("context", display_name="反推资料")],
             outputs=[io.String.Output(display_name="提示词"),io.String.Output(display_name="分析证据"),
                      io.String.Output(display_name="状态")])
