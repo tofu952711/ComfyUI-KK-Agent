@@ -16,6 +16,7 @@ parser=argparse.ArgumentParser()
 parser.add_argument("--comfy-root",required=True,type=Path)
 parser.add_argument("--reverse-fails",action="store_true")
 parser.add_argument("--review-linked",action="store_true")
+parser.add_argument("--custom-review-ai",action="store_true")
 args=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[1]
 job=tempfile.TemporaryDirectory(prefix="dsh-real-scheduler-")
@@ -108,6 +109,8 @@ def on_coordinator():
 
 gateway=BParallelGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
     fail_segment=2 if args.reverse_fails else None,on_coordinator=on_coordinator)
+review_gateway = BParallelGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
+    protocol="codez",review_only=True,expected_api_key="local-review-key") if args.custom_review_ai else None
 nodes.NODE_CLASS_MAPPINGS.update(pkg.NODE_CLASS_MAPPINGS)
 nodes.NODE_CLASS_MAPPINGS.update(SchedulerSource=Source,SaveVideo=CheckedSaveVideo,DSH_VideoReverse=CheckedReverse,ReviewRulesSource=ReviewRulesSource)
 # Match server discovery order: the original node is inspected before its subclass.
@@ -132,6 +135,10 @@ graph={
 if args.review_linked:
     graph["review_rules"]={"class_type":"ReviewRulesSource","inputs":{}}
     graph["segment"]["inputs"]["chain_b_review_rules_text"]=["review_rules",0]
+if args.custom_review_ai:
+    graph["segment"]["inputs"].update({"review_ai":"自定义", "review_ai.api_key":"local-review-key",
+        "review_ai.base_url":review_gateway.url, "review_ai.model":"review-model",
+        "review_ai.api_protocol":"codez"})
 async def run():
     validation=await validate_prompt("scheduler-validation-test",graph,None)
     assert validation[0], validation
@@ -144,13 +151,19 @@ async def run():
     await executor.execute_async(graph,"scheduler-concurrency-test",execute_outputs=["reverse","save1","save2"])
     assert executor.success == (not args.reverse_fails),executor.status_messages
     assert saved.is_set() and reverse_done.is_set()
-    assert len(gateway.requests)==(7 if args.reverse_fails else 8)
-    assert len(gateway.review_requests)==(0 if args.reverse_fails else 1)
+    assert len(gateway.requests)==(7 if args.reverse_fails or args.custom_review_ai else 8)
+    assert len(gateway.review_requests)==(0 if args.reverse_fails or args.custom_review_ai else 1)
     assert gateway.peak_children==2 and not gateway.errors, gateway.errors
     assert not list((DATA/"output").glob("video/DSH/**/*")), "plugin must not choose/save any output path"
     assert len(list((DATA/"output").glob("chosen-by-node/*.mp4")))==2
     if not args.reverse_fails:
-        system=next(m["content"] for m in gateway.review_requests[0]["messages"] if m["role"]=="system")
+        body=(review_gateway or gateway).review_requests[0]
+        system=body["instructions"] if args.custom_review_ai else next(m["content"] for m in body["messages"] if m["role"]=="system")
+        if args.custom_review_ai:
+            assert body["model"]=="review-model"
+            assert len(review_gateway.requests)==1 and not review_gateway.errors
+            assert all(b["model"]=="gpt-6.1-sol" for b in gateway.requests)
+            print("CUSTOM_REVIEW_AI_DYNAMIC_INPUTS_ROUTE_ONLY_REVIEW_OK")
         assert system==REVIEW_TEXT
         assert any(e["event"]=="review_rules_source_evaluated" for e in events)==args.review_linked
         print("STAGED_B_CUSTOM_REVIEW_RULES_SENT_EXACTLY_OK")
@@ -182,4 +195,5 @@ try:
     asyncio.run(run())
 finally:
     gateway.close()
+    if review_gateway:review_gateway.close()
     pkg.BRIDGE.close()

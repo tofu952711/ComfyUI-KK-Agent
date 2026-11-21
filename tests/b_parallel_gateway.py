@@ -11,7 +11,7 @@ SHARED = {key: f"统一设定：{key}" for key in FIELDS}
 
 class BParallelGateway:
     def __init__(self, segments, protocol="openai-completions", fail_segment=None,
-                 on_coordinator=None, fail_coordinator=False, review_response=None, child_texts=None):
+                 on_coordinator=None, fail_coordinator=False, review_response=None, child_texts=None, review_only=False, expected_api_key=None):
         self.requests, self.paths, self.errors = [], [], []
         self.segment_requests, self.coordinator_requests, self.worker_requests = [], [], []
         self.worker_initial_images = {}
@@ -29,6 +29,8 @@ class BParallelGateway:
 
             def do_POST(self):
                 try:
+                    if expected_api_key is not None:
+                        assert self.headers.get("Authorization")=="Bearer "+expected_api_key
                     body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     responses = protocol == "codez"
                     assert self.path == ("/v1/responses" if responses else "/v1/chat/completions")
@@ -50,7 +52,8 @@ class BParallelGateway:
                     text = ""
                     if "所有子任务已完成，请逐段复核" in task:
                         outer.review_requests.append(body)
-                        assert outer.finished_children == set(range(1, len(segments)+1))
+                        if not review_only:
+                            assert outer.finished_children == set(range(1, len(segments)+1))
                         assert "全部草稿" in texts[1] and "actual_segments" in texts[1]
                         assert all(f'"segment_index": {i}' in texts[1] for i in range(1, len(segments)+1))
                         from dsh_bridge.b_review import CHECKS

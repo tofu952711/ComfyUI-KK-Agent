@@ -224,3 +224,39 @@ def test_failed_review_never_delivers_unreviewed_drafts(staged, tmp_path, monkey
         assert json.loads((directory / "status.json").read_text(encoding="utf-8"))["status"] == "failed"
     finally:
         gateway.close()
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_custom_review_uses_separate_endpoint_protocol_key_and_model(staged, tmp_path, monkeypatch, blocked):
+    kwargs = arguments(staged, 2, tmp_path, monkeypatch)
+    main = BParallelGateway(kwargs["video_record"]["segments"], "codez", expected_api_key="local-fake-key")
+    response = {"status":"blocked","checks":{"自定义检查":False},"issues":["模拟审核不通过"],"edits":[]} if blocked else None
+    reviewer = BParallelGateway(kwargs["video_record"]["segments"], "openai-completions", review_only=True,
+        expected_api_key="custom-local-key", review_response=response)
+    kwargs.update(base_url=main.url, review_ai={"review_ai":"自定义","api_key":"custom-local-key",
+        "base_url":reviewer.url,"model":"separate-review-model","api_protocol":"openai-completions"})
+    try:
+        with SpeedRun("separate-review", "gpt-6.1-sol") as speed:
+            if blocked:
+                with pytest.raises(RuntimeError,match="模拟审核不通过"):
+                    module.run_parallel_reverse(**kwargs,speed=speed)
+            else:
+                _,record,_=module.run_parallel_reverse(**kwargs,speed=speed)
+                assert record["review"]["model"]=="separate-review-model"
+                assert record["review"]["api_protocol"]=="openai-completions"
+                assert record["review"]["ai_mode"]=="自定义"
+        assert not main.errors and not reviewer.errors
+        assert not main.review_requests
+        assert len(reviewer.requests)==len(reviewer.review_requests)==1
+        assert reviewer.requests[0]["model"]=="separate-review-model"
+        assert all(body["model"]==kwargs["model"] for body in main.requests)
+        directory=tmp_path/"diagnostics"/"b-results"/speed.run_id
+        assert (directory/"draft-prompts.txt").is_file()
+        assert (directory/"prompts.txt").exists()==(not blocked)
+        for path in directory.glob("*.json"):
+            assert "custom-local-key" not in path.read_text(encoding="utf-8")
+        for path in kwargs["audit_dir"].glob("*.jsonl"):
+            assert "custom-local-key" not in path.read_text(encoding="utf-8")
+    finally:
+        main.close()
+        reviewer.close()

@@ -50,7 +50,11 @@ assert full_inputs["required"]["requirement"][1]["multiline"]
 widget_names = [name for group in ("required", "optional") for name, spec in full_inputs[group].items()
                 if name != "video" and not name.startswith("image")]
 assert widget_names == ["api_key", "base_url", "model", "requirement", "timeout_s", "max_tokens",
-                        "asr_model_dir", "api_protocol", "rules_text", "keep_audio", "segment_rules_text", "chain_b_reverse_rules_text", "reasoning_effort", "stream_usage", "chain_b_review_rules_text"], widget_names
+                        "asr_model_dir", "api_protocol", "rules_text", "keep_audio", "segment_rules_text", "chain_b_reverse_rules_text", "reasoning_effort", "stream_usage", "chain_b_review_rules_text", "review_ai"], widget_names
+review_options=full_inputs["optional"]["review_ai"][1]["options"]
+assert [o["key"] for o in review_options]==["沿用当前AI","自定义"]
+assert not review_options[0]["inputs"].get("required")
+assert set(review_options[1]["inputs"]["required"])=={"api_key","base_url","model","api_protocol"}
 assert full_inputs['optional']['stream_usage'][1]['default'] is True
 assert full_inputs["optional"]["reasoning_effort"][1]["default"] == "high"
 assert set(full_inputs["optional"]["reasoning_effort"][1]["options"]) == {"high", "medium", "low", "auto"}
@@ -250,6 +254,14 @@ async def run():
         assert "审核规定" in str(exc)
     else:
         raise AssertionError("Blank custom review must fail before API calls")
+    try:
+        await full.execute(video=b_video,api_key="",base_url="",model="",requirement="user",
+            segment_rules_text="B",chain_b_reverse_rules_text="reverse",
+            review_ai={"review_ai":"自定义","api_key":"","base_url":"https://review.invalid/v1","model":"review"})
+    except ValueError as exc:
+        assert "自定义审核AI" in str(exc)
+    else:
+        raise AssertionError("Incomplete custom reviewer must fail before preprocessing or main API calls")
     review_rules="  自定义审核{{literal}}：只检查台词与表演说明一致性。按JSON契约返回。\n "
     user="  B用户原文\n "
     segment_rules="  B分段规定{{literal}}：根据证据调用工具分段。\n "

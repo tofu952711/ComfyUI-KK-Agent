@@ -15,6 +15,7 @@ from .paths import bridge_data_dir
 from .video_preparation import prepared_images, prepared_evidence_text
 from .workflow import workflow_bridge
 from .b_review import REVIEW_RULES, parse_review, apply_review
+from .review_ai import resolve_review_ai
 
 SHARED_FIELDS = ("全片内容概要", "人物与服装", "商品与适配", "场景与光线", "声音与说话人", "跨段衔接")
 COORDINATOR_RULES = """你是B链路的视频反推主AI。视频已经实际分段，不得重新分段。
@@ -118,9 +119,10 @@ def merge_results(results, segments):
 def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api_protocol,
                          reasoning_effort, stream_usage, requirement, reverse_rules,
                          output, report, slots, refs, media_text, segment_answer, video_record,
-                         media_mcp, speed, configure_stage, audit_dir, observe=None, observer=None, review_rules=REVIEW_RULES):
+                         media_mcp, speed, configure_stage, audit_dir, observe=None, observer=None, review_rules=REVIEW_RULES, review_ai=None):
     if not isinstance(review_rules, str) or not review_rules.strip():
         raise ValueError("请填写「链路B：审核规定」")
+    reviewer = resolve_review_ai(review_ai, api_key=api_key, base_url=base_url, model=model, api_protocol=api_protocol)
     started = time.monotonic()
     segments = video_record["segments"]
     if len(segments) != video_record["count"] or not 2 <= len(segments) <= 5:
@@ -247,7 +249,9 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
                     "\n【原始素材证据和本次图片编号】\n" + materials)
         audit = audit_dir / f"{speed.run_id}-b-review.jsonl"
         task = requirement + "\n\n所有子任务已完成，请逐段复核，按本次内部质检JSON契约返回通过结果或最小修改。"
-        with bridge_context() as bridge:
+        with workflow_bridge(**reviewer, timeout_s=max(10, int(control.remaining())),
+                             max_tokens=max_tokens, reasoning_effort=reasoning_effort,
+                             stream_usage=stream_usage) as bridge:
             control.add(bridge)
             try:
                 configure_stage(bridge, speed, audit, review_rules, task, evidence, "review", images)
@@ -260,7 +264,9 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
                 revised = apply_review(results, review)
                 record = {**review, "seconds": round(time.monotonic() - begin, 3),
                           "usage": answer.get("usage"), "audit_file": str(audit),
-                          "agent_role": "main_final_review", "segment_count": len(results)}
+                          "agent_role": "main_final_review", "segment_count": len(results),
+                          "model": reviewer["model"], "api_protocol": reviewer["api_protocol"],
+                          "ai_mode": (review_ai or {}).get("review_ai", "沿用当前AI")}
                 save("review.json", record)
                 for result in revised:
                     save(f"segment-{result['segment_index']}-reviewed.json", result)

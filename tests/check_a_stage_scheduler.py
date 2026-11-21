@@ -148,6 +148,8 @@ graph = {
         "model": "gpt-6.1-sol", "requirement": "A user", "rules_text": "A rules",
         "segment_rules_text": "", "chain_b_reverse_rules_text": "",
         "chain_b_review_rules_text": ["b_review", 0],
+        "review_ai": "自定义", "review_ai.api_key": "", "review_ai.base_url": "",
+        "review_ai.model": "", "review_ai.api_protocol": "openai-completions",
         "api_protocol": "openai-completions", "timeout_s": 60, "max_tokens": 2048}},
     "reverse": {"class_type": "DSH_VideoReverse", "inputs": {"context": ["stage", 8]}},
     "process": {"class_type": "AProcessVideo", "inputs": {"video": ["stage", 3]}},

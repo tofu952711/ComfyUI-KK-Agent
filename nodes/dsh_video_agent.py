@@ -61,7 +61,16 @@ class DSH_FullVideoAgent(io.ComfyNode):
                     io.String.Input("chain_b_review_rules_text", optional=True, multiline=True, default=REVIEW_RULES, lazy=True,
                                     display_name="链路B：审核规定",
                                     placeholder="在此编辑B链路最终审核全文；也可右键转为输入连接文本节点。",
-                                    tooltip="全部分段反推完成后，按此文本审核并修改。默认显示原审核全文，可自行修改检查项；请保留JSON返回格式说明。A不读取此字段。")],
+                                    tooltip="全部分段反推完成后，按此文本审核并修改。默认显示原审核全文，可自行修改检查项；请保留JSON返回格式说明。A不读取此字段。"),
+                    io.DynamicCombo.Input("review_ai", optional=True, display_name="审核AI",
+                        tooltip="沿用当前AI：使用上方接口配置。自定义：仅最终审核使用独立接口；超时、输出上限、思考等级与用量设置沿用节点设置。",
+                        options=[io.DynamicCombo.Option("沿用当前AI", []),
+                                 io.DynamicCombo.Option("自定义", [
+                                     io.String.Input("api_key", default="", display_name="审核 API Key"),
+                                     io.String.Input("base_url", default="", display_name="审核 Base URL"),
+                                     io.String.Input("model", default="", display_name="审核模型"),
+                                     io.Combo.Input("api_protocol", options=["openai-completions", "deepseek-messages", "codez"],
+                                                    default="openai-completions", display_name="审核接口协议")])])],
             outputs=[io.String.Output(display_name="提示词"), io.String.Output(display_name="分析证据"), io.String.Output(display_name="状态"),
                      *[io.Video.Output(display_name=f"video{index}") for index in range(1, 6)]])
 
@@ -85,7 +94,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                       api_protocol="deepseek-messages", rules_text="", keep_audio=True, segment_rules_text="", reasoning_effort="high", stream_usage=True,
                       image1=None, image2=None, image3=None, image4=None, image5=None,
                       image6=None, image7=None, image8=None, image9=None, image10=None,
-                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES):
+                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None):
         if video is None:
             raise ValueError("请连接原视频，脚本需要检测时长后选择链路")
         # Dispatch happens before credentials, prompts, references or media staging.
@@ -98,7 +107,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 cls.run_chain_b, video, routing, api_key, base_url, model, requirement,
                 segment_rules_text, chain_b_reverse_rules_text, timeout_s, max_tokens,
                 asr_model_dir, api_protocol, reasoning_effort, stream_usage, keep_audio,
-                _observer, image_values, chain_b_review_rules_text))
+                _observer, image_values, chain_b_review_rules_text, review_ai))
         result = await asyncio.to_thread(cls.run_chain_a, video, routing,
             api_key, base_url, model, requirement, rules_text, timeout_s, max_tokens,
             asr_model_dir, api_protocol, reasoning_effort, stream_usage, _observer,
