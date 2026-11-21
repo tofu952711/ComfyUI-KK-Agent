@@ -12,6 +12,7 @@ from ..dsh_bridge.video_preparation import prepare_video, prepared_images, prepa
 from ..dsh_bridge.images import tensor_to_base64
 from ..dsh_bridge.media_tools import MediaTools
 from ..dsh_bridge.duration_routing import route_duration
+from ..dsh_bridge.b_review import REVIEW_RULES
 
 
 class DSH_FullVideoAgent(io.ComfyNode):
@@ -56,7 +57,11 @@ class DSH_FullVideoAgent(io.ComfyNode):
                                    default="high", display_name="思考等级",
                                    tooltip="high=高，medium=中，low=低；auto=接口默认，不指定等级。默认high，A反推、B分段与反推及工具续轮均使用本等级。所选模型与接口须支持该参数；接口拒绝时明确报错，不会悄悄降级。"),
                     io.Boolean.Input('stream_usage', optional=True, default=True, display_name='请求token用量',
-                                     tooltip='开启后向Chat Completions接口发送stream_options.include_usage，用于计算tok/s。CodeZ Responses和DeepSeek Messages使用自身用量字段。接口不支持时可关闭；没有用量则不估算速度。')],
+                                     tooltip='开启后向Chat Completions接口发送stream_options.include_usage，用于计算tok/s。CodeZ Responses和DeepSeek Messages使用自身用量字段。接口不支持时可关闭；没有用量则不估算速度。'),
+                    io.String.Input("chain_b_review_rules_text", optional=True, multiline=True, default=REVIEW_RULES, lazy=True,
+                                    display_name="链路B：审核规定",
+                                    placeholder="在此编辑B链路最终审核全文；也可右键转为输入连接文本节点。",
+                                    tooltip="全部分段反推完成后，按此文本审核并修改。默认显示原审核全文，可自行修改检查项；请保留JSON返回格式说明。A不读取此字段。")],
             outputs=[io.String.Output(display_name="提示词"), io.String.Output(display_name="分析证据"), io.String.Output(display_name="状态"),
                      *[io.Video.Output(display_name=f"video{index}") for index in range(1, 6)]])
 
@@ -65,12 +70,14 @@ class DSH_FullVideoAgent(io.ComfyNode):
         return float("nan")
 
     @classmethod
-    def check_lazy_status(cls, video, rules_text=None, segment_rules_text=None, chain_b_reverse_rules_text=None, **kwargs):
+    def check_lazy_status(cls, video, rules_text=None, segment_rules_text=None, chain_b_reverse_rules_text=None,
+                          chain_b_review_rules_text=REVIEW_RULES, **kwargs):
         routing = route_duration(video.get_duration())
         if routing["chain"] == "A":
             return ["rules_text"] if rules_text is None else []
         return [name for name, value in (("segment_rules_text", segment_rules_text),
-                ("chain_b_reverse_rules_text", chain_b_reverse_rules_text)) if value is None]
+                ("chain_b_reverse_rules_text", chain_b_reverse_rules_text),
+                ("chain_b_review_rules_text", chain_b_review_rules_text)) if value is None]
 
     @classmethod
     async def execute(cls, video, api_key, base_url, model, requirement,
@@ -78,7 +85,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                       api_protocol="deepseek-messages", rules_text="", keep_audio=True, segment_rules_text="", reasoning_effort="high", stream_usage=True,
                       image1=None, image2=None, image3=None, image4=None, image5=None,
                       image6=None, image7=None, image8=None, image9=None, image10=None,
-                      chain_b_reverse_rules_text=""):
+                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES):
         if video is None:
             raise ValueError("请连接原视频，脚本需要检测时长后选择链路")
         # Dispatch happens before credentials, prompts, references or media staging.
@@ -91,7 +98,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 cls.run_chain_b, video, routing, api_key, base_url, model, requirement,
                 segment_rules_text, chain_b_reverse_rules_text, timeout_s, max_tokens,
                 asr_model_dir, api_protocol, reasoning_effort, stream_usage, keep_audio,
-                _observer, image_values))
+                _observer, image_values, chain_b_review_rules_text))
         result = await asyncio.to_thread(cls.run_chain_a, video, routing,
             api_key, base_url, model, requirement, rules_text, timeout_s, max_tokens,
             asr_model_dir, api_protocol, reasoning_effort, stream_usage, _observer,

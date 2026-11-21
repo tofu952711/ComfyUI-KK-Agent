@@ -47,7 +47,12 @@ def arguments(staged, count, tmp_path, monkeypatch):
 @pytest.mark.parametrize("protocol,count", [("openai-completions", 2), ("codez", 2), ("codez", 4)])
 def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp_path, monkeypatch, protocol, count):
     kwargs = arguments(staged, count, tmp_path, monkeypatch)
-    gateway = BParallelGateway(kwargs["video_record"]["segments"], protocol)
+    custom = protocol == "codez" and count == 4
+    custom_checks = {"台词与表演说明一致": True, "促销信息有依据": True, "素材数量正确": True}
+    if custom:
+        kwargs["review_rules"] = "  自定义审核全文{{literal}}\n只检查台词表演、价格证据和素材数量；返回约定的JSON。  "
+    gateway = BParallelGateway(kwargs["video_record"]["segments"], protocol,
+        review_response={"status": "approved", "checks": custom_checks, "issues": [], "edits": []} if custom else None)
     kwargs.update(base_url=gateway.url, api_protocol=protocol)
     original_files = {str(p.relative_to(staged)): hashlib.sha256(p.read_bytes()).hexdigest()
                       for p in staged.iterdir() if p.is_file()}
@@ -69,11 +74,11 @@ def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp
         assert len(audits) == count + 2
         assert len(gateway.review_requests) == 1
         assert record["review"]["status"] == "approved"
-        assert set(record["review"]["checks"]) == set(CHECKS)
+        assert set(record["review"]["checks"]) == set(custom_checks if custom else CHECKS)
         review_body = gateway.review_requests[0]
         review_system = (review_body["instructions"] if protocol == "codez" else next(
             m["content"] for m in review_body["messages"] if m["role"] == "system"))
-        assert review_system == module.REVIEW_RULES
+        assert review_system == kwargs.get("review_rules", module.REVIEW_RULES)
         assert "dialogue_timing_hints" not in json.dumps(review_body)
         assert all(r["reviewed"] for r in record["segments"])
         assert any(r.get("b_agent_role") == "reviewer" and r["phase"] == "review" for r in requests)

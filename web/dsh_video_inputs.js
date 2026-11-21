@@ -32,7 +32,13 @@ app.registerExtension({
       const previous = info?.widgets_values;
       const migrated = migrateFullVideoWidgets(previous);
       if (migrated !== previous) info.widgets_values = migrated;
+      const reviewWidget = this.widgets?.find((item) => item.name === "chain_b_review_rules_text");
+      const reviewDefault = nodeData.input?.optional?.chain_b_review_rules_text?.[1]?.default ?? reviewWidget?.value;
       const result = original?.apply(this, arguments);
+      const reviewLinked = this.inputs?.some((input) => input.name === "chain_b_review_rules_text" && input.link != null);
+      if (reviewWidget && !reviewLinked && (!Array.isArray(migrated) || migrated.length <= 14)) {
+        reviewWidget.value = reviewDefault;
+      }
       if (this.inputs?.some((input) => input.name === "person" || input.name === "product") ||
           (this.inputs && !this.inputs.some((input) => input.name === "image10"))) {
         migrateFullVideoImageInputs(this, this.graph?.links);
@@ -47,7 +53,7 @@ app.registerExtension({
       if (migrated !== previous) {
         for (const [index, name] of [[6, "asr_model_dir"], [7, "api_protocol"], [8, "rules_text"],
             [10, "segment_rules_text"], [11, "chain_b_reverse_rules_text"],
-            [12, "reasoning_effort"], [13, "stream_usage"]]) {
+            [12, "reasoning_effort"], [13, "stream_usage"], [14, "chain_b_review_rules_text"]]) {
           if (index >= migrated.length) continue;
           if (name === "reasoning_effort" && effortLinked) continue;
           const widget = this.widgets?.find((item) => item.name === name);

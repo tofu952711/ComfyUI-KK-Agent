@@ -77,11 +77,11 @@ oldNode.onConfigure(oldInfo);
 assert.deepEqual(oldNode.widgets.map(widget => widget.value),
   ["models/custom-asr", "codez", rules, oldPrefix[10], "", "low", false]);
 assert.deepEqual(oldInfo.widgets_values, [...oldPrefix, "", "low", false]);
-const editors = { widgets: ["requirement", "rules_text", "segment_rules_text", "chain_b_reverse_rules_text"]
+const editors = { widgets: ["requirement", "rules_text", "segment_rules_text", "chain_b_reverse_rules_text", "chain_b_review_rules_text"]
   .map(name => ({ name, type: "text" })) };
 resizeFullVideoInputs(editors);
-assert.deepEqual(editors.widgets.map(widget => widget.options.getMinHeight()), [120, 260, 140, 260]);
-assert.deepEqual(editors.widgets.map(widget => widget.computeSize(520)), [[520,120],[520,260],[520,140],[520,260]]);
+assert.deepEqual(editors.widgets.map(widget => widget.options.getMinHeight()), [120, 260, 140, 260, 260]);
+assert.deepEqual(editors.widgets.map(widget => widget.computeSize(520)), [[520,120],[520,260],[520,140],[520,260],[520,260]]);
 console.log("CHAIN_B_WIDGET_CONFIGURATION_AND_EDITOR_HEIGHT_OK");
 
 const priorWorkflow = new TestNode();
@@ -123,3 +123,28 @@ migrateFullVideoImageInputs(saved, links);
 migrateFullVideoOutputs(saved);
 assert.deepEqual(saved, migratedNode);
 console.log("FULL_VIDEO_OLD_GRAPH_IMAGES_OUTPUTS_LINKS_OK");
+
+// Older saved graphs inherit the visible default; explicit blanks and linked
+// text are preserved instead of silently restoring the built-in instructions.
+class ReviewNode {
+  onConfigure(info) {
+    this.widgets[0].value = info.widgets_values[14];
+  }
+}
+const reviewDefault = "默认审核全文";
+globalThis.testExtension.beforeRegisterNodeDef(ReviewNode, {
+  name: "DSH_VideoSegments", input: { optional: { chain_b_review_rules_text: ["STRING", { default: reviewDefault }] } },
+});
+const reviewNode = new ReviewNode();
+reviewNode.widgets = [{ name: "chain_b_review_rules_text", value: reviewDefault }];
+const currentValues = [...oldPrefix, "B反推", "high", true];
+reviewNode.onConfigure({ widgets_values: currentValues });
+assert.equal(reviewNode.widgets[0].value, reviewDefault);
+for (const custom of ["自定义审核\n完整规则", ""]) {
+  reviewNode.onConfigure({ widgets_values: [...currentValues, custom] });
+  assert.equal(reviewNode.widgets[0].value, custom);
+}
+reviewNode.inputs = [{ name: "chain_b_review_rules_text", link: 100 }];
+reviewNode.onConfigure({ widgets_values: currentValues });
+assert.equal(reviewNode.widgets[0].value, undefined);
+console.log("EDITABLE_B_REVIEW_OLD_GRAPH_CUSTOM_BLANK_AND_LINKED_VALUES_OK");

@@ -76,3 +76,21 @@ def test_review_cannot_remove_the_entire_body():
     review = decision([{"segment_index": 1, "old": "唯一正文", "new": "", "reason": "test"}])
     with pytest.raises(RuntimeError, match="正文为空"):
         apply_review(draft, review)
+
+
+@pytest.mark.parametrize("checks", [
+    {"自定义审核项": True},
+    {"台词与表演说明一致": True, "价格证据": True, "素材数量": True},
+])
+def test_custom_check_names_are_accepted(checks):
+    value = {**decision(), "checks": checks}
+    assert parse_review(json.dumps(value)) == value
+
+
+@pytest.mark.parametrize("checks", [
+    {"新增审核项": False}, {**dict.fromkeys(CHECKS, True), "新增审核项": False},
+    {" ": True}, {"新增审核项": 1},
+])
+def test_custom_failed_or_invalid_check_cannot_pass(checks):
+    with pytest.raises(RuntimeError):
+        parse_review(json.dumps({**decision(), "checks": checks}))

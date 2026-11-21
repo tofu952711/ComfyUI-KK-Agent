@@ -44,3 +44,6 @@ API 调用需要联网并产生所用服务的费用。节点内的 **Key 和规
 更多用法：[节点与排错](docs/VIDEO-PROMPT.md) · [规则填写](docs/EXTERNAL-RULES.md) · [视频分段](docs/VIDEO-SEGMENTS.md) · [CPU 说话人分析](docs/SPEAKER-ANALYSIS.md) · [云端部署](docs/RUNNINGHUB.md)
 
 基于 [sxxzwbl/ComfyUI-DSH-Bridge](https://github.com/sxxzwbl/ComfyUI-DSH-Bridge)，保留 [MIT 许可证](LICENSE) 与第三方许可证。插件附带的 14 套 Skill 保留在 `vendor/skills/`；视频反推节点使用你填写的规则，不自动加载内置创作 Skill。
+
+
+B 链路最终审核可在节点末尾的「链路B：审核规定」多行文本框中编辑，也可右键转为输入连接外部文本节点。默认显示原审核全文，旧工作流未保存该字段时使用相同默认文本；明确清空后，B 会在调用接口前提示填写，A 不读取此字段。审核范围以文本框内容为准，不再由程序固定为两项；修改检查项时同步修改 JSON 示例中的 checks 名称，保留 status、checks、issues、edits 及逐字替换结构。该文本随工作流保存。

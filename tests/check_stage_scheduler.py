@@ -15,6 +15,7 @@ import types
 parser=argparse.ArgumentParser()
 parser.add_argument("--comfy-root",required=True,type=Path)
 parser.add_argument("--reverse-fails",action="store_true")
+parser.add_argument("--review-linked",action="store_true")
 args=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[1]
 job=tempfile.TemporaryDirectory(prefix="dsh-real-scheduler-")
@@ -54,6 +55,16 @@ class Source(io.ComfyNode):
     @classmethod
     def execute(cls):
         return io.NodeOutput(InputImpl.VideoFromFile(str(source)))
+
+REVIEW_TEXT="  自定义阶段审核：核对台词和表演说明，返回JSON。\n "
+class ReviewRulesSource(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(node_id="ReviewRulesSource",inputs=[],outputs=[io.String.Output()])
+    @classmethod
+    def execute(cls):
+        events.append({"event":"review_rules_source_evaluated"})
+        return io.NodeOutput(REVIEW_TEXT)
 
 reverse_started=threading.Event()
 reverse_done=threading.Event()
@@ -98,7 +109,7 @@ def on_coordinator():
 gateway=BParallelGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
     fail_segment=2 if args.reverse_fails else None,on_coordinator=on_coordinator)
 nodes.NODE_CLASS_MAPPINGS.update(pkg.NODE_CLASS_MAPPINGS)
-nodes.NODE_CLASS_MAPPINGS.update(SchedulerSource=Source,SaveVideo=CheckedSaveVideo,DSH_VideoReverse=CheckedReverse)
+nodes.NODE_CLASS_MAPPINGS.update(SchedulerSource=Source,SaveVideo=CheckedSaveVideo,DSH_VideoReverse=CheckedReverse,ReviewRulesSource=ReviewRulesSource)
 # Match server discovery order: the original node is inspected before its subclass.
 full=pkg.NODE_CLASS_MAPPINGS["DSH_FullVideoAgent"]
 full.GET_SCHEMA()
@@ -110,6 +121,7 @@ graph={
         "video":["source",0],"api_key":"local-only","base_url":gateway.url,"model":"gpt-6.1-sol",
         "requirement":"test","rules_text":"A must not run","api_protocol":"openai-completions",
         "segment_rules_text":"调用工具切成两段","chain_b_reverse_rules_text":"逐段反推",
+        "chain_b_review_rules_text":REVIEW_TEXT,
         "timeout_s":90,"max_tokens":2048}},
     "reverse":{"class_type":"DSH_VideoReverse","inputs":{"context":["segment",8]}},
     "save1":{"class_type":"SaveVideo","inputs":{"video":["segment",3],
@@ -117,6 +129,9 @@ graph={
     "save2":{"class_type":"SaveVideo","inputs":{"video":["segment",4],
         "filename_prefix":"chosen-by-node/clip","format":"mp4","format.codec":"h264"}},
 }
+if args.review_linked:
+    graph["review_rules"]={"class_type":"ReviewRulesSource","inputs":{}}
+    graph["segment"]["inputs"]["chain_b_review_rules_text"]=["review_rules",0]
 async def run():
     validation=await validate_prompt("scheduler-validation-test",graph,None)
     assert validation[0], validation
@@ -134,6 +149,11 @@ async def run():
     assert gateway.peak_children==2 and not gateway.errors, gateway.errors
     assert not list((DATA/"output").glob("video/DSH/**/*")), "plugin must not choose/save any output path"
     assert len(list((DATA/"output").glob("chosen-by-node/*.mp4")))==2
+    if not args.reverse_fails:
+        system=next(m["content"] for m in gateway.review_requests[0]["messages"] if m["role"]=="system")
+        assert system==REVIEW_TEXT
+        assert any(e["event"]=="review_rules_source_evaluated" for e in events)==args.review_linked
+        print("STAGED_B_CUSTOM_REVIEW_RULES_SENT_EXACTLY_OK")
     print("REAL_COMFY_SCHEDULER_STOCK_SAVEVIDEO_OVERLAPS_REVERSE_OK",json.dumps(events))
     # A releases its original video before the single deferred inference call.
     if not args.reverse_fails:

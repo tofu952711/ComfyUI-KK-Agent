@@ -48,7 +48,7 @@ class BParallelGateway:
                     has_output = any(m.get("type") == "function_call_output" or m.get("role") == "tool" for m in messages)
                     call = None
                     text = ""
-                    if "你是B链路最终复核主AI" in system:
+                    if "所有子任务已完成，请逐段复核" in task:
                         outer.review_requests.append(body)
                         assert outer.finished_children == set(range(1, len(segments)+1))
                         assert "全部草稿" in texts[1] and "actual_segments" in texts[1]

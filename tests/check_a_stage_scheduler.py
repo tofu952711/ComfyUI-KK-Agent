@@ -91,6 +91,15 @@ class Source(io.ComfyNode):
         return io.NodeOutput(source_video)
 
 
+class UnusedBReview(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(node_id="UnusedBReview", inputs=[], outputs=[io.String.Output()])
+    @classmethod
+    def execute(cls):
+        raise AssertionError("A must not evaluate B review rules")
+
+
 class ProcessVideo(io.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -128,15 +137,17 @@ class CheckedSave(SaveVideo):
 
 
 nodes.NODE_CLASS_MAPPINGS.update(pkg.NODE_CLASS_MAPPINGS)
-nodes.NODE_CLASS_MAPPINGS.update(ASource=Source, AProcessVideo=ProcessVideo, SaveVideo=CheckedSave)
+nodes.NODE_CLASS_MAPPINGS.update(ASource=Source, AProcessVideo=ProcessVideo, SaveVideo=CheckedSave, UnusedBReview=UnusedBReview)
 stage = pkg.NODE_CLASS_MAPPINGS["DSH_VideoSegments"]
 stage.GET_SCHEMA()
 graph = {
     "source": {"class_type": "ASource", "inputs": {}},
+    "b_review": {"class_type": "UnusedBReview", "inputs": {}},
     "stage": {"class_type": "DSH_VideoSegments", "inputs": {
         "video": ["source", 0], "api_key": "local-only", "base_url": gateway.url,
         "model": "gpt-6.1-sol", "requirement": "A user", "rules_text": "A rules",
         "segment_rules_text": "", "chain_b_reverse_rules_text": "",
+        "chain_b_review_rules_text": ["b_review", 0],
         "api_protocol": "openai-completions", "timeout_s": 60, "max_tokens": 2048}},
     "reverse": {"class_type": "DSH_VideoReverse", "inputs": {"context": ["stage", 8]}},
     "process": {"class_type": "AProcessVideo", "inputs": {"video": ["stage", 3]}},

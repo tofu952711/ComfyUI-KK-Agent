@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import re
+# Default check names; user-edited rules may return different check names.
 CHECKS = ("人物商品声线场景一致", "跨段位置持握开封衔接")
 
 REVIEW_RULES = """你是B链路最终复核主AI。所有分段子智能体已经返回，现在必须逐段核对全部草稿后再交付。
@@ -23,6 +24,7 @@ REVIEW_RULES = """你是B链路最终复核主AI。所有分段子智能体已�
 "人物商品声线场景一致":true,"跨段位置持握开封衔接":true},
 "issues":["简述发现的问题及修正依据，无问题则空数组"],
 "edits":[{"segment_index":1,"old":"精确原文","new":"修正后的文字","reason":"具体原因"}]}
+checks的键名对应上文审核项；自定义审核项时请同步修改示例键名。checks不能为空，值必须为true或false。
 checks表示应用这些修改后的检查结果，不是修改前。approved必须没有edits；corrected必须有edits。
 以上两项明确通过才能approved/corrected；这两项存在无法解决的冲突时status=blocked，
 对应checks为false并在issues写清原因，不冒充全部通过。
@@ -40,11 +42,12 @@ def parse_review(text):
     if not isinstance(value, dict) or value.get("status") not in ("approved", "corrected", "blocked"):
         raise RuntimeError("B主AI最终复核状态无效")
     checks, edits, issues = value.get("checks"), value.get("edits"), value.get("issues")
-    if (not isinstance(checks, dict) or any(type(checks.get(k)) is not bool for k in CHECKS)
+    if (not isinstance(checks, dict) or not checks
+            or any(not isinstance(k, str) or not k.strip() or type(v) is not bool for k, v in checks.items())
             or not isinstance(edits, list) or not isinstance(issues, list)
             or any(not isinstance(issue, str) for issue in issues)):
         raise RuntimeError("B主AI最终复核缺少完整检查结果")
-    if value["status"] == "blocked" or not all(checks[k] for k in CHECKS):
+    if value["status"] == "blocked" or not all(checks.values()):
         raise RuntimeError("B主AI最终复核未通过：" + "；".join(issues or ["检查项未全部通过"]))
     if (value["status"] == "approved" and edits) or (value["status"] == "corrected" and not edits):
         raise RuntimeError("B主AI复核状态与修改列表不一致")

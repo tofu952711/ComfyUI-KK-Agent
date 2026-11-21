@@ -118,7 +118,9 @@ def merge_results(results, segments):
 def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api_protocol,
                          reasoning_effort, stream_usage, requirement, reverse_rules,
                          output, report, slots, refs, media_text, segment_answer, video_record,
-                         media_mcp, speed, configure_stage, audit_dir, observe=None, observer=None):
+                         media_mcp, speed, configure_stage, audit_dir, observe=None, observer=None, review_rules=REVIEW_RULES):
+    if not isinstance(review_rules, str) or not review_rules.strip():
+        raise ValueError("请填写「链路B：审核规定」")
     started = time.monotonic()
     segments = video_record["segments"]
     if len(segments) != video_record["count"] or not 2 <= len(segments) <= 5:
@@ -234,7 +236,7 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
         transcript = json.loads((output / "transcript.json").read_text(encoding="utf-8"))
         materials = prepared_evidence_text(review_report, shots, transcript, slots)
         payload = {"actual_segments": segments, "shared_context": contract,
-                   "note": "只复核人物商品声线场景一致性，以及跨段动作衔接。",
+                   "note": "按本次审核规定检查全部草稿；检查项与修改范围以审核规定为准。",
                    "drafts": [{"segment_index": r["segment_index"], "segment": r["segment"],
                                "text": r["text"],
                                "verified_evidence": {k: v for k, v in r["analysis_evidence"].items()
@@ -248,7 +250,7 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
         with bridge_context() as bridge:
             control.add(bridge)
             try:
-                configure_stage(bridge, speed, audit, REVIEW_RULES, task, evidence, "review", images)
+                configure_stage(bridge, speed, audit, review_rules, task, evidence, "review", images)
                 bridge.cfg["startup_timeout_s"] = min(30, control.remaining())
                 bridge.cfg["_token_monitor"] = TaggedMonitor(speed, "reviewer")
                 answer = bridge.ask(bridge.session_id("chain-b-final-review"), task, images,
@@ -298,7 +300,7 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
         draft_text = merge_results(results, segments)
         (result_dir / "draft-prompts.txt").write_text(draft_text, encoding="utf-8")
         status("reviewing")
-        print("[DSH] B子任务全部完成，主AI正在复核人物商品声线场景一致性与跨段动作衔接", flush=True)
+        print("[DSH] B子任务全部完成，主AI正在按「链路B：审核规定」进行最终审核", flush=True)
         review_future = pool.submit(final_review, contract)
         all_futures.append(review_future)
         for done in await_futures([review_future], control):

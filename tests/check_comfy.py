@@ -50,7 +50,7 @@ assert full_inputs["required"]["requirement"][1]["multiline"]
 widget_names = [name for group in ("required", "optional") for name, spec in full_inputs[group].items()
                 if name != "video" and not name.startswith("image")]
 assert widget_names == ["api_key", "base_url", "model", "requirement", "timeout_s", "max_tokens",
-                        "asr_model_dir", "api_protocol", "rules_text", "keep_audio", "segment_rules_text", "chain_b_reverse_rules_text", "reasoning_effort", "stream_usage"], widget_names
+                        "asr_model_dir", "api_protocol", "rules_text", "keep_audio", "segment_rules_text", "chain_b_reverse_rules_text", "reasoning_effort", "stream_usage", "chain_b_review_rules_text"], widget_names
 assert full_inputs['optional']['stream_usage'][1]['default'] is True
 assert full_inputs["optional"]["reasoning_effort"][1]["default"] == "high"
 assert set(full_inputs["optional"]["reasoning_effort"][1]["options"]) == {"high", "medium", "low", "auto"}
@@ -60,6 +60,8 @@ assert full_inputs["optional"]["segment_rules_text"][1]["lazy"]
 assert full_inputs["optional"]["chain_b_reverse_rules_text"][1]["multiline"]
 assert full_inputs["optional"]["chain_b_reverse_rules_text"][1]["default"] == ""
 assert full_inputs["optional"]["chain_b_reverse_rules_text"][1]["lazy"]
+review_spec = full_inputs["optional"]["chain_b_review_rules_text"][1]
+assert review_spec["multiline"] and review_spec["lazy"] and "最终复核" in review_spec["default"]
 assert full_inputs["optional"]["keep_audio"][1]["default"] is True
 assert all(f"image{i}" in full_inputs["optional"] for i in range(1, 11))
 assert "person" not in full_inputs["required"] and "product" not in full_inputs["required"]
@@ -239,6 +241,16 @@ async def run():
             assert "链路B" in str(exc)
         else:
             raise AssertionError("B must require its own two rules before preparation")
+    assert full.check_lazy_status(video=b_video,segment_rules_text="B",chain_b_reverse_rules_text="reverse",chain_b_review_rules_text=None)==["chain_b_review_rules_text"]
+    assert full.check_lazy_status(video=video,rules_text="A",chain_b_review_rules_text=None)==[]
+    try:
+        await full.execute(video=b_video,api_key="",base_url="",model="",requirement="user",
+            segment_rules_text="B",chain_b_reverse_rules_text="reverse",chain_b_review_rules_text="  ")
+    except ValueError as exc:
+        assert "审核规定" in str(exc)
+    else:
+        raise AssertionError("Blank custom review must fail before API calls")
+    review_rules="  自定义审核{{literal}}：只检查台词与表演说明一致性。按JSON契约返回。\n "
     user="  B用户原文\n "
     segment_rules="  B分段规定{{literal}}：根据证据调用工具分段。\n "
     reverse_rules="  B反推规定{{literal}}：逐段输出提示词。\n "
@@ -267,7 +279,7 @@ async def run():
             result=await full.execute(video=b_video,api_key="local-only",base_url=gateway.url,
                 model="gpt-6.1-sol",requirement=user,rules_text=UnreadableInput(),
                 segment_rules_text=segment_rules,chain_b_reverse_rules_text=reverse_rules,
-                api_protocol=protocol,reasoning_effort="medium",keep_audio=keep_audio,
+                api_protocol=protocol,reasoning_effort="medium",keep_audio=keep_audio,chain_b_review_rules_text=review_rules,
                 image2=sheet_tensor,image10=sheet_tensor,timeout_s=90,_observer=stage_observer)
             records=json.loads(result.result[1])
             assert records["chain"]=="B" and records["chain_status"]=="completed"
@@ -281,6 +293,10 @@ async def run():
             assert records["media_input"]["video_sheet_images"]+2>20
             assert len(gateway.requests)==4+2*len(ranges)
             assert len(gateway.review_requests)==1
+            review_body=gateway.review_requests[0]
+            actual_review=review_body["instructions"] if protocol=="codez" else next(m["content"] for m in review_body["messages"] if m["role"]=="system")
+            assert actual_review==review_rules
+            assert records["rules"]["review"]["sha256"]==__import__("hashlib").sha256(review_rules.encode()).hexdigest()
             assert records["parallel_reverse"]["review"]["status"]=="approved"
             assert gateway.peak_children==len(ranges) and not gateway.errors, gateway.errors
             assert records["parallel_reverse"]["agent_count"]==len(ranges)

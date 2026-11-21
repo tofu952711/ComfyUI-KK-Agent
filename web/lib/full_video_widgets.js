@@ -3,7 +3,7 @@ const EFFORTS = new Set(["high", "medium", "low", "auto"]);
 
 // Give each prompt its own minimum instead of sharing a tiny editor area.
 export function resizeFullVideoInputs(node) {
-  for (const [name, height] of [["requirement", 120], ["rules_text", 260], ["segment_rules_text", 140], ["chain_b_reverse_rules_text", 260]]) {
+  for (const [name, height] of [["requirement", 120], ["rules_text", 260], ["segment_rules_text", 140], ["chain_b_reverse_rules_text", 260], ["chain_b_review_rules_text", 260]]) {
     const widget = node.widgets?.find((item) => item.name === name);
     if (!widget) continue;
     widget.options ??= {};

@@ -12,6 +12,7 @@ from .media_workflow import evidence
 from .token_speed import SpeedRun
 from .video_segments import validate_segments
 from .workflow import workflow_bridge
+from .b_review import REVIEW_RULES
 
 
 def read_tool_videos(output, info):
@@ -56,9 +57,10 @@ def configure_stage(bridge, speed, audit_file, system, user, media_text, phase, 
 
 def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
                 segment_rules, reverse_rules, timeout_s, max_tokens, asr_model_dir,
-                api_protocol, reasoning_effort, stream_usage, keep_audio, observer, image_values):
-    # Validate B's own two rule fields before any preprocessing or API work.
-    for value, label in ((segment_rules, "链路B：分段规定"), (reverse_rules, "链路B：反推提示词规定")):
+                api_protocol, reasoning_effort, stream_usage, keep_audio, observer, image_values, review_rules=REVIEW_RULES):
+    # Validate B's own rule fields before any preprocessing or API work.
+    for value, label in ((segment_rules, "链路B：分段规定"), (reverse_rules, "链路B：反推提示词规定"),
+                         (review_rules, "链路B：审核规定")):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"请填写「{label}」，链路B不会使用链路A的系统提示词代替")
     from .paths import bridge_data_dir
@@ -121,7 +123,7 @@ def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
         text, parallel, reverse_audits = run_parallel_reverse(
             api_key=api_key, base_url=base_url, model=model, timeout_s=timeout_s,
             max_tokens=max_tokens, api_protocol=api_protocol, reasoning_effort=reasoning_effort,
-            stream_usage=stream_usage, requirement=requirement, reverse_rules=reverse_rules,
+            stream_usage=stream_usage, requirement=requirement, reverse_rules=reverse_rules, review_rules=review_rules,
             output=output, report=report, slots=slots, refs=refs, media_text=media_text,
             segment_answer=segment_answer, video_record=video_record,
             media_mcp=segment_bridge.cfg["media_mcp"], speed=speed,
@@ -150,7 +152,7 @@ def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
             "token_speed": {**speed.snapshot(), "status": "completed"},
             "rules": {phase: {"characters": len(value),
                 "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest()}
-                for phase, value in (("segment", segment_rules), ("reverse", reverse_rules))},
+                for phase, value in (("segment", segment_rules), ("reverse", reverse_rules), ("review", review_rules))},
             "timings": {"preparation_seconds": round(prepared_at - started, 3),
                 "segment_agent_and_tools_seconds": round(segmented_at - prepared_at, 3),
                 "video_encoding_seconds": round(sum(video_record["encoding_seconds"]), 3),
