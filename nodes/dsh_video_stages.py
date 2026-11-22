@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from ..dsh_bridge.cancellation import CancelScope, cancellable_to_thread
 
 from comfy_api.latest import io
 from ..dsh_bridge.chain_b import iter_chain_b
 from ..dsh_bridge.duration_routing import route_duration
 from ..dsh_bridge.b_review import REVIEW_RULES
+from ..dsh_bridge.a_review import REVIEW_RULES as A_REVIEW_RULES
 from .dsh_video_agent import DSH_FullVideoAgent
 
 ChainContext = io.Custom("DSH_VIDEO_CONTEXT")
@@ -15,7 +17,8 @@ ChainContext = io.Custom("DSH_VIDEO_CONTEXT")
 
 class VideoJob:
     """Opaque in-memory job; never serialize prompts, credentials or generator."""
-    def __init__(self, stages=None, result=None):
+    def __init__(self, stages=None, result=None, scope=None):
+        self.scope = scope or CancelScope()
         self._stages = stages
         self._result = result
         self._error = None
@@ -26,8 +29,9 @@ class VideoJob:
 
     def finish(self):
         with self._lock:
+            self.scope.check()
             if self._error:
-                raise RuntimeError(self._error)
+                raise self._error
             if self._result is not None:
                 return self._result
             if self._stages is None:
@@ -40,15 +44,27 @@ class VideoJob:
                     return self._result
                 raise RuntimeError("反推阶段未正确结束")
             except BaseException as exc:
-                self._error = str(exc)
+                self._error = exc
                 raise
             finally:
                 self._stages.close()
                 self._stages = None
+                self.scope.close()
+
+    def close(self):
+        self.scope.cancel()
+        with self._lock:
+            if self._stages is not None:
+                self._stages.close()
+                self._stages = None
+            self.scope.close()
 
     def __del__(self):
-        if self._stages is not None:
-            self._stages.close()
+        # Finalizers can run on Comfy's HTTP loop; cleanup must not block it.
+        if getattr(self, "_stages", None) is not None:
+            threading.Thread(target=self.close, name="video-job-cleanup", daemon=True).start()
+        elif hasattr(self, "scope"):
+            self.scope.close()
 
 
 class DSH_VideoSegments(DSH_FullVideoAgent):
@@ -65,7 +81,7 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
         schema = super().define_schema()
         schema.node_id = "DSH_VideoSegments"
         schema.display_name = "KK agent 视频反推"
-        schema.description = ("不足32秒走A：video1输出未分段原视频，独立反推与下游打码/保存并行；32至60秒执行B的AI工具分段。"
+        schema.description = ("不足32秒走A：video1输出最长30秒参考视频，反推仍覆盖完整原片，独立反推与下游打码/保存并行；32至60秒执行B的AI工具分段。"
             "video1—video5连接SaveVideo，反推资料连接DSH独立反推节点；两条分支可同时执行。"
             "本节点不自行保存视频，不指定保存目录。原有规则框和接口设置保持独立。")
         schema.outputs.append(ChainContext.Output(display_name="反推资料"))
@@ -78,7 +94,8 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
                       segment_rules_text="", reasoning_effort="high", stream_usage=True,
                       image1=None, image2=None, image3=None, image4=None, image5=None,
                       image6=None, image7=None, image8=None, image9=None, image10=None,
-                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None, audio1=None, audio2=None, audio3=None):
+                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None, audio1=None, audio2=None, audio3=None,
+                      chain_a_review_rules_text=A_REVIEW_RULES):
         routing = route_duration(video.get_duration())
         print(f"[DSH] 并行入口：{routing['duration_seconds']}秒 → 链路{routing['chain']}", flush=True)
         images = (image1,image2,image3,image4,image5,image6,image7,image8,image9,image10)
@@ -86,17 +103,27 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
             stages = cls.iter_chain_a(video, routing,
                 api_key,base_url,model,requirement,rules_text,timeout_s,max_tokens,
                 asr_model_dir,api_protocol,reasoning_effort,stream_usage,_observer,images,
-                publish_video=True, audio_values=(audio1, audio2, audio3))
+                publish_video=True, audio_values=(audio1, audio2, audio3),
+                chain_a_review_rules_text=chain_a_review_rules_text, review_ai=review_ai)
         else:
             stages = iter_chain_b(cls, video,routing,api_key,base_url,model,requirement,
                 segment_rules_text,chain_b_reverse_rules_text,timeout_s,max_tokens,
                 asr_model_dir,api_protocol,reasoning_effort,stream_usage,keep_audio,_observer,images,chain_b_review_rules_text,review_ai,(audio1,audio2,audio3))
+        scope = CancelScope()
+        def prepare():
+            try:
+                return next(stages)
+            except BaseException:
+                stages.close()
+                scope.close()
+                raise
         try:
-            result = await asyncio.to_thread(next, stages)
+            result = await cancellable_to_thread(prepare, scope=scope)
         except BaseException:
-            stages.close()
+            scope.cancel()
+            scope.close()
             raise
-        return io.NodeOutput(*result, VideoJob(stages=stages))
+        return io.NodeOutput(*result, VideoJob(stages=stages, scope=scope))
 
 
 class DSH_VideoReverse(io.ComfyNode):
@@ -113,5 +140,10 @@ class DSH_VideoReverse(io.ComfyNode):
     async def execute(cls, context):
         if not isinstance(context, VideoJob):
             raise ValueError("请连接DSH并行入口节点的「反推资料」输出")
-        result = await asyncio.to_thread(context.finish)
+        try:
+            result = await cancellable_to_thread(context.finish, scope=context.scope)
+        except BaseException:
+            context.scope.cancel()
+            threading.Thread(target=context.close, name="video-job-cleanup", daemon=True).start()
+            raise
         return io.NodeOutput(*result[:3])

@@ -141,7 +141,8 @@ class MediaTools:
         scores = []
         with av.open(str(self.video)) as container:
             stream = container.streams.video[0]
-            stream.thread_type = "AUTO"
+            stream.thread_type = "SLICE"
+            stream.codec_context.thread_count = 2
             origin = float(stream.start_time or 0) * float(stream.time_base)
             for index, frame in enumerate(container.decode(stream)):
                 # Resize during pixel conversion; do not allocate a full-size
@@ -186,7 +187,8 @@ class MediaTools:
             return
         with av.open(str(self.video)) as container:
             stream = container.streams.video[0]
-            stream.thread_type = "AUTO"
+            stream.thread_type = "SLICE"
+            stream.codec_context.thread_count = 2
             origin = float(stream.start_time or 0) * float(stream.time_base)
             fps = float(stream.average_rate or 30)
             # Respect display aspect ratio (e.g. anamorphic sources).

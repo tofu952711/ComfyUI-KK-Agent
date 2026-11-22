@@ -86,11 +86,8 @@ class BReverseControl:
         if time.monotonic() >= self.deadline:
             raise RuntimeError("B并发反推整体超时，已完成的段落保留在B结果目录")
         # The Comfy interrupt button is checked while the supervisor waits.
-        try:
-            from comfy.model_management import throw_exception_if_processing_interrupted
-        except ImportError:
-            return
-        throw_exception_if_processing_interrupted()
+        from .cancellation import check_cancelled
+        check_cancelled()
 
     def remaining(self):
         self.check()

@@ -210,12 +210,19 @@ class Bridge:
         for b64 in images or []:
             blocks.append({"type": "image", "data": b64, "mimeType": "image/png"})
 
+        scope = getattr(self, "_workflow_scope", None)
+        if scope is not None:
+            scope.check()
         try:
             result = self._channel(channel).ask(session, blocks, timeout=timeout, on_progress=on_progress)
+            if scope is not None:
+                scope.check()
             self._last_error = ""
             self._log_history(session, task, result.get("text", ""), result.get("usage", {}))
             return result
-        except Exception as exc:
+        except BaseException as exc:
+            if scope is not None:
+                scope.check()
             self._last_error = f"{type(exc).__name__}: {exc}"
             raise
 

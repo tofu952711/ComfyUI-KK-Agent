@@ -34,7 +34,16 @@ app.registerExtension({
       if (migrated !== previous) info.widgets_values = migrated;
       const reviewWidget = this.widgets?.find((item) => item.name === "chain_b_review_rules_text");
       const reviewDefault = nodeData.input?.optional?.chain_b_review_rules_text?.[1]?.default ?? reviewWidget?.value;
+      let aReviewWidget = this.widgets?.find((item) => item.name === "chain_a_review_rules_text");
+      const aReviewDefault = nodeData.input?.optional?.chain_a_review_rules_text?.[1]?.default ?? aReviewWidget?.value;
       const result = original?.apply(this, arguments);
+      // Re-find after configure: custom reviewer widgets may have been inserted.
+      aReviewWidget = this.widgets?.find((item) => item.name === "chain_a_review_rules_text");
+      const aReviewIndex = this.widgets?.indexOf(aReviewWidget) ?? -1;
+      const aReviewLinked = this.inputs?.some((input) => input.name === "chain_a_review_rules_text" && input.link != null);
+      if (aReviewWidget && !aReviewLinked && (!Array.isArray(migrated) || aReviewIndex >= migrated.length || aReviewWidget.value == null)) {
+        aReviewWidget.value = aReviewDefault;
+      }
       const reviewLinked = this.inputs?.some((input) => input.name === "chain_b_review_rules_text" && input.link != null);
       if (reviewWidget && !reviewLinked && (!Array.isArray(migrated) || migrated.length <= 14)) {
         reviewWidget.value = reviewDefault;

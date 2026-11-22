@@ -109,6 +109,7 @@ class SDKRuntime:
         self._state_lock = threading.RLock()
         self._turn_lock = threading.Lock()
         self._harness: Any = None
+        self._starting_harness: Any = None
         self._active = ""
         self._cancelled = threading.Event()
         self._known: set[str] = set()
@@ -261,11 +262,14 @@ class SDKRuntime:
                 shutdown_timeout_seconds=2.0,
                 on_user_question=lambda _request, _cancelled: {"cancelled": True},
             )
+            self._starting_harness = harness
             try:
                 harness.start()
             except BaseException:
                 harness.close()
                 raise
+            finally:
+                self._starting_harness = None
             self._harness = harness
             self._restored.clear()
 
@@ -278,7 +282,7 @@ class SDKRuntime:
         temp.write_text(json.dumps(sorted(self._known)), encoding="utf-8")
         temp.replace(manifest)
 
-    def stop(self, expected: Any = None) -> None:
+    def stop(self, expected: Any = None, *, force: bool = False) -> None:
         with self._state_lock:
             harness = self._harness
             if expected is not None and harness is not expected:
@@ -286,13 +290,21 @@ class SDKRuntime:
             self._harness = None
             self._restored.clear()
         if harness is not None:
-            harness.close()
+            if force and hasattr(harness, "cancel"):
+                harness.cancel()
+            else:
+                harness.close()
 
     def cancel(self) -> bool:
         if not self._active:
             return False
         self._cancelled.set()
-        self.stop()
+        # start() retains the state lock while handshaking. Stop the starting
+        # owned worker directly so cancellation does not wait for that timeout.
+        starting = self._starting_harness
+        if starting is not None:
+            (starting.cancel if hasattr(starting, "cancel") else starting.close)()
+        self.stop(force=True)
         return True
 
     def run(self, session: str, blocks: list[dict[str, Any]], timeout: float,

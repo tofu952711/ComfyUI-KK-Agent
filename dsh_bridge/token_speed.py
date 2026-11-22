@@ -67,7 +67,11 @@ class SpeedRun:
         return self
 
     def __exit__(self, exc_type, *_):
-        self.finish('error' if exc_type else 'completed')
+        from .cancellation import current_scope
+        scope = current_scope()
+        cancelled = ((scope is not None and scope.cancelled.is_set()) or
+                     (exc_type is not None and exc_type.__name__ in ('InterruptProcessingException', 'CancelledError')))
+        self.finish('cancelled' if cancelled else ('error' if exc_type else 'completed'))
 
     def snapshot(self):
         rows = [{**row, 'elapsed_seconds': row['elapsed_seconds'] +

@@ -59,6 +59,8 @@ events = []
 
 
 def on_request(body, index):
+    if index == 2:
+        return  # independent A reviewer receives the draft after video saving
     assert index == 1, "A must not split or repeat inference"
     assert all(not tool["function"]["name"].endswith("set_video_segments") for tool in body["tools"])
     if args.audio_bindings:
@@ -70,7 +72,7 @@ def on_request(body, index):
     assert saved.wait(20), "Video processing/save did not run during model inference"
 
 
-gateway = PreparedGateway(on_request=on_request, final_texts=["A完整反推提示词"])
+gateway = PreparedGateway(on_request=on_request, final_texts=["A完整反推提示词", json.dumps({"status":"approved","checks":{"consistent":True},"issues":[],"edits":[]})])
 if args.reverse_fails:
     a_module = sys.modules[pkg.NODE_CLASS_MAPPINGS["DSH_FullVideoAgent"].__module__]
     original_bridge = a_module.workflow_bridge
@@ -163,7 +165,7 @@ graph = {
         "model": "gpt-6.1-sol", "requirement": "A user", "rules_text": "A rules",
         "segment_rules_text": "", "chain_b_reverse_rules_text": "",
         "chain_b_review_rules_text": ["b_review", 0],
-        "review_ai": "自定义", "review_ai.api_key": "", "review_ai.base_url": "",
+        "review_ai": "沿用当前AI", "review_ai.api_key": "", "review_ai.base_url": "",
         "review_ai.model": "", "review_ai.api_protocol": "openai-completions",
         "api_protocol": "openai-completions", "timeout_s": 60, "max_tokens": 2048}},
     "reverse": {"class_type": "DSH_VideoReverse", "inputs": {"context": ["stage", 8]}},
@@ -191,7 +193,7 @@ async def run():
     assert not list((DATA / "output").glob("unused*.mp4"))
     assert source_path.read_bytes() == original_bytes
     if not args.reverse_fails:
-        assert len(gateway.requests) == 1
+        assert len(gateway.requests) == 2
     print("REAL_A_VIDEO1_PROCESSING_AND_SAVE_OVERLAP_OK", json.dumps({
         "file_like": args.file_like, "model_fails": args.reverse_fails, "events": events}))
 

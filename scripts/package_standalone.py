@@ -49,7 +49,7 @@ def main() -> int:
             archive.write(path, f"{ROOT.name}/{relative.as_posix()}")
             count += 1
         archive.writestr(f"{ROOT.name}/BUILD_INFO.json", json.dumps({
-            "release": "2026.11.22", "version": "0.8.5", "sdk_runtime": "0.2.2rc2", "upstream_commit": "538007a",
+            "release": "2026.11.23", "version": "0.8.5", "sdk_runtime": "0.2.2rc2", "upstream_commit": "538007a",
             "default_api": "https://api.apimart.ai/v1", "default_model": "gpt-6.1-sol",
             "desktop_required": False, "dependencies_downloaded_during_install": False,
             "portable_platform": "windows-x64", "bundled_python": "3.12.10",

@@ -164,7 +164,9 @@ def prepare_b_chain_media(cfg, video, routing, asr_model_dir, image_values, audi
             raise ValueError(f"image{index}只接收单张图片；请拆开图片批次后连接独立插口")
         refs.append(tensor_to_base64(image, max_side=1568))
     print("[DSH] 链路B：正在本地预处理视频和音轨转写（不可解码片尾采样自动跳过）", flush=True)
-    report, shots, transcript = prepare_b_video(output, Path(cfg["media_model_dir"]))
+    from .isolated_preparation import prepare_isolated
+    report, shots, transcript = prepare_isolated(output, Path(cfg["media_model_dir"]),
+        chain="B", timeout=cfg.get("request_timeout_s", 900))
     from .reference_audio import attach_audio_bindings
     attach_audio_bindings(audio_values, output, report)
     text = prepared_evidence_text(report, shots, transcript, slots)

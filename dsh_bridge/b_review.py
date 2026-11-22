@@ -62,11 +62,14 @@ def apply_review(results, review):
             raise RuntimeError("B复核修改项无效")
         index, old, new, reason = (edit.get(k) for k in ("segment_index", "old", "new", "reason"))
         if (type(index) is not int or index not in grouped or not isinstance(old, str) or not old
-                or not isinstance(new, str) or not isinstance(reason, str) or not reason.strip() or old == new):
+                or not isinstance(new, str) or not isinstance(reason, str) or not reason.strip()):
             raise RuntimeError("B复核修改缺少有效段号、原文、新文或原因")
         original = results[index-1]["text"]
         if original.count(old) != 1:
             raise RuntimeError(f"B第{index}段复核修改无法唯一匹配原文；草稿保留，未输出未核实修改")
+        # A validated no-op needs no replacement and must not reserve an edit span.
+        if old == new:
+            continue
         start = original.index(old)
         grouped[index].append((start, start + len(old), new))
     for index, result in enumerate(final, 1):

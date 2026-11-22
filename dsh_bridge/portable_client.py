@@ -116,12 +116,19 @@ class BundledHarness:
         finally:
             self._on_notification = None
 
-    def close(self) -> None:
+    def cancel(self) -> None:
+        self.close(force=True)
+
+    def close(self, *, force: bool = False) -> None:
         process = self._process
         if process is None:
             return
         try:
             if process.poll() is None:
+                if force:
+                    from .cancellation import kill_process_tree
+                    kill_process_tree(process)
+                    return
                 try:
                     self._request("close", {}, 8)
                 except Exception:

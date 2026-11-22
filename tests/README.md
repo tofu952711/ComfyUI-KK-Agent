@@ -26,3 +26,14 @@ python tests/check_stage_scheduler.py --comfy-root <ComfyUI目录> --review-link
 ```
 
 检查实际请求中的音频编号绑定、无音频内容发送、各子任务分工、节点输出上限传递、正文分隔，以及独立审核与并行视频保存。音频输入只检测有无，不运行参考音频分析。
+
+2026-11-23 的 A 审核、30 秒参考视频、取消与同步节点并发检查：
+
+```bash
+python -m pytest -c tests/pytest.ini --confcutdir tests tests/test_a_review.py tests/test_b_review.py tests/test_review_ai.py tests/test_cancellation.py tests/test_audio_bindings.py tests/test_b_expression_plan.py tests/test_parallel_video.py -q
+python tests/check_a_reference.py --comfy-root <ComfyUI目录>
+python tests/check_a_stage_scheduler.py --comfy-root <ComfyUI目录> --file-like --audio-bindings
+python tests/check_sync_concurrency.py --comfy-root <ComfyUI目录> --chain B
+```
+
+上述单元回归共 77 项通过。A 参考视频检查使用 31.5 秒合成原片，确认 31.4 秒尾帧仍送入反推和审核，而参考输出不超过 30 秒；含音频的 29.97 fps 视频也验证此上限。实际 ComfyUI 调度使用本地模拟接口验证 A 反推、审核、B 子任务、自定义审核及视频保存；不调用付费云端模型。取消测试只终止其自行创建的进程。

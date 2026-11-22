@@ -48,6 +48,8 @@ def ensure_registered() -> bool:
         return True
     if PromptServer is None or getattr(PromptServer, "instance", None) is None:
         return False
+    from ..dsh_bridge.cancellation import install_interrupt_hook
+    install_interrupt_hook(PromptServer.instance)
     _register_routes(PromptServer.instance.routes)
     _REGISTERED = True
     return True

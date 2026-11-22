@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from .bridge import Bridge
+from .cancellation import watch_bridge
 from .config import DEFAULTS, validate_updates
 
 
@@ -30,6 +31,7 @@ def workflow_bridge(api_key: str, base_url: str, model: str, timeout_s: int,
                "warmup_on_start": False}
         bridge = Bridge(cfg, persist=False)
         try:
-            yield bridge
+            with watch_bridge(bridge):
+                yield bridge
         finally:
             bridge.close()

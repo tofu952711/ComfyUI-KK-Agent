@@ -1,6 +1,7 @@
 """Full VIDEO input to Harness with local analysis tools."""
 from __future__ import annotations
 import asyncio
+from ..dsh_bridge.cancellation import cancellable_to_thread
 import hashlib
 import json
 from pathlib import Path
@@ -13,13 +14,14 @@ from ..dsh_bridge.images import tensor_to_base64
 from ..dsh_bridge.media_tools import MediaTools
 from ..dsh_bridge.duration_routing import route_duration
 from ..dsh_bridge.b_review import REVIEW_RULES
+from ..dsh_bridge.a_review import REVIEW_RULES as A_REVIEW_RULES
 
 
 class DSH_FullVideoAgent(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(node_id="DSH_FullVideoAgent", display_name="DSH Agent 完整视频反推", category="DSH Bridge",
-            description="只按视频实际时长选择独立链路：不足32秒进入A，使用前两个文本框直接反推；32至60秒进入B，AI按B分段规定调用工具实际裁切，再独立使用B反推规定生成提示词。两阶段均携带共用素材资料。超过60秒报错。支持最多五个分段VIDEO输出。",
+            description="只按视频实际时长选择独立链路：不足32秒进入A，按A规则反推后由独立审核AI检查；32至60秒进入B，AI按B分段规定调用工具实际裁切，再独立使用B反推规定生成提示词。两阶段均携带共用素材资料。超过60秒报错。支持最多五个分段VIDEO输出。",
             hidden=[io.Hidden.unique_id],
             inputs=[io.Video.Input("video", display_name="原视频"),
                     *[io.Image.Input(f"image{index}", optional=True, display_name=f"image{index}",
@@ -44,7 +46,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                                     placeholder="在此粘贴系统提示词，例如原 SKILL.md 正文；也可转为输入连接文本节点。",
                                     tooltip="第二个文本框：作为模型系统提示词发送。插件不再内置爆款裂变；右键转为输入后可连接外部文本节点。"),
                     io.Boolean.Input("keep_audio", optional=True, default=True, display_name="保留音轨",
-                                     tooltip="控制链路B分段工具是否保留原音轨。分流入口的链路A从video1直通原视频及其音轨，导出音频由下游节点控制。"),
+                                     tooltip="控制链路B分段工具是否保留原音轨。链路A从video1输出最长30秒参考视频及其音轨，反推保留完整原片信息，导出音频由下游节点控制。"),
                     io.String.Input("segment_rules_text", optional=True, multiline=True, default="", lazy=True,
                                     display_name="链路B：分段规定",
                                     placeholder="链路B：在此填写视频分段规定，AI将按此规定调用工具实际裁切。",
@@ -63,7 +65,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                                     placeholder="在此编辑B链路最终审核全文；也可右键转为输入连接文本节点。",
                                     tooltip="全部分段反推完成后，按此文本审核并修改。默认显示原审核全文，可自行修改检查项；请保留JSON返回格式说明。A不读取此字段。"),
                     io.DynamicCombo.Input("review_ai", optional=True, display_name="审核AI",
-                        tooltip="沿用当前AI：使用上方接口配置。自定义：仅最终审核使用独立接口；超时、输出上限、思考等级与用量设置沿用节点设置。",
+                        tooltip="沿用当前AI：使用上方接口配置。自定义：A/B最终审核使用独立接口；超时、输出上限、思考等级与用量设置沿用节点设置。",
                         options=[io.DynamicCombo.Option("沿用当前AI", []),
                                  io.DynamicCombo.Option("自定义", [
                                      io.String.Input("api_key", default="", display_name="审核 API Key"),
@@ -73,7 +75,11 @@ class DSH_FullVideoAgent(io.ComfyNode):
                                                     default="openai-completions", display_name="审核接口协议")])]),
                     *[io.Audio.Input(f"audio{index}", optional=True, display_name=f"音频{index}",
                                      tooltip=f"可选：接入后告知AI‘音频{index}绑定模特{index}’。只检测有无输入，不分析音频；A/B均生效。")
-                      for index in range(1, 4)]],
+                      for index in range(1, 4)],
+                    io.String.Input("chain_a_review_rules_text", optional=True, multiline=True, default=A_REVIEW_RULES, lazy=True,
+                                    display_name="链路A：审核规定",
+                                    placeholder="填写A链路审核提示词；也可右键转为输入连接文本节点。",
+                                    tooltip="A反推完成后独立调用审核AI，按此规则审核并修改完整原片草稿。请保留JSON返回格式说明；整篇草稿段号为1。审核AI接口使用上方审核AI配置，B不读取此字段。")],
             outputs=[io.String.Output(display_name="提示词"), io.String.Output(display_name="分析证据"), io.String.Output(display_name="状态"),
                      *[io.Video.Output(display_name=f"video{index}") for index in range(1, 6)]])
 
@@ -83,10 +89,11 @@ class DSH_FullVideoAgent(io.ComfyNode):
 
     @classmethod
     def check_lazy_status(cls, video, rules_text=None, segment_rules_text=None, chain_b_reverse_rules_text=None,
-                          chain_b_review_rules_text=REVIEW_RULES, **kwargs):
+                          chain_b_review_rules_text=REVIEW_RULES, chain_a_review_rules_text=A_REVIEW_RULES, **kwargs):
         routing = route_duration(video.get_duration())
         if routing["chain"] == "A":
-            return ["rules_text"] if rules_text is None else []
+            return [name for name, value in (("rules_text", rules_text),
+                    ("chain_a_review_rules_text", chain_a_review_rules_text)) if value is None]
         return [name for name, value in (("segment_rules_text", segment_rules_text),
                 ("chain_b_reverse_rules_text", chain_b_reverse_rules_text),
                 ("chain_b_review_rules_text", chain_b_review_rules_text)) if value is None]
@@ -97,7 +104,8 @@ class DSH_FullVideoAgent(io.ComfyNode):
                       api_protocol="deepseek-messages", rules_text="", keep_audio=True, segment_rules_text="", reasoning_effort="high", stream_usage=True,
                       image1=None, image2=None, image3=None, image4=None, image5=None,
                       image6=None, image7=None, image8=None, image9=None, image10=None,
-                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None, audio1=None, audio2=None, audio3=None):
+                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None, audio1=None, audio2=None, audio3=None,
+                      chain_a_review_rules_text=A_REVIEW_RULES):
         if video is None:
             raise ValueError("请连接原视频，脚本需要检测时长后选择链路")
         # Dispatch happens before credentials, prompts, references or media staging.
@@ -106,15 +114,15 @@ class DSH_FullVideoAgent(io.ComfyNode):
         print(f"[DSH] 视频{routing['duration_seconds']}秒 → 链路{routing['chain']}", flush=True)
         image_values = (image1, image2, image3, image4, image5, image6, image7, image8, image9, image10)
         if routing["chain"] == "B":
-            return io.NodeOutput(*await asyncio.to_thread(
+            return io.NodeOutput(*await cancellable_to_thread(
                 cls.run_chain_b, video, routing, api_key, base_url, model, requirement,
                 segment_rules_text, chain_b_reverse_rules_text, timeout_s, max_tokens,
                 asr_model_dir, api_protocol, reasoning_effort, stream_usage, keep_audio,
                 _observer, image_values, chain_b_review_rules_text, review_ai, (audio1, audio2, audio3)))
-        result = await asyncio.to_thread(cls.run_chain_a, video, routing,
+        result = await cancellable_to_thread(cls.run_chain_a, video, routing,
             api_key, base_url, model, requirement, rules_text, timeout_s, max_tokens,
             asr_model_dir, api_protocol, reasoning_effort, stream_usage, _observer,
-            image_values, (audio1, audio2, audio3))
+            image_values, (audio1, audio2, audio3), chain_a_review_rules_text, review_ai)
         return io.NodeOutput(*result)
 
     @classmethod
@@ -131,7 +139,9 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 raise ValueError(f"image{index}只接收单张图片；请拆开图片批次后连接独立插口")
             refs.append(tensor_to_base64(image, max_side=1568))
         print(f"[DSH] 链路{routing['chain']}：正在本地预处理视频和音轨转写", flush=True)
-        report, shots, transcript = prepare_video(output, Path(cfg["media_model_dir"]))
+        from ..dsh_bridge.isolated_preparation import prepare_isolated
+        report, shots, transcript = prepare_isolated(output, Path(cfg["media_model_dir"]),
+            timeout=cfg.get("request_timeout_s", 900))
         from ..dsh_bridge.reference_audio import attach_audio_bindings
         attach_audio_bindings(audio_values, output, report)
         media_text = prepared_evidence_text(report, shots, transcript, slots)
@@ -147,10 +157,12 @@ class DSH_FullVideoAgent(io.ComfyNode):
     @classmethod
     def run_chain_a(cls, video, routing, api_key, base_url, model, requirement,
                     rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
-                    reasoning_effort, stream_usage, observer, image_values, audio_values=(None, None, None)):
+                    reasoning_effort, stream_usage, observer, image_values, audio_values=(None, None, None),
+                    chain_a_review_rules_text=A_REVIEW_RULES, review_ai=None):
         stages = cls.iter_chain_a(video, routing, api_key, base_url, model, requirement,
             rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
-            reasoning_effort, stream_usage, observer, image_values, audio_values=audio_values)
+            reasoning_effort, stream_usage, observer, image_values, audio_values=audio_values,
+            chain_a_review_rules_text=chain_a_review_rules_text, review_ai=review_ai)
         try:
             next(stages)
             try:
@@ -164,9 +176,15 @@ class DSH_FullVideoAgent(io.ComfyNode):
     @classmethod
     def iter_chain_a(cls, video, routing, api_key, base_url, model, requirement,
                      rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
-                     reasoning_effort, stream_usage, observer, image_values, *, publish_video=False, audio_values=(None, None, None)):
+                     reasoning_effort, stream_usage, observer, image_values, *, publish_video=False, audio_values=(None, None, None),
+                     chain_a_review_rules_text=A_REVIEW_RULES, review_ai=None):
         if not isinstance(rules_text, str) or not rules_text.strip():
             raise ValueError("请在第二个文本框「系统提示词（原Skill正文）」填写反推规则，或转为输入连接文本节点")
+        if not isinstance(chain_a_review_rules_text, str) or not chain_a_review_rules_text.strip():
+            raise ValueError("请填写「链路A：审核规定」，A不会使用B审核规则代替")
+        from ..dsh_bridge.review_ai import resolve_review_ai
+        reviewer = resolve_review_ai(review_ai, api_key=api_key, base_url=base_url,
+                                     model=model, api_protocol=api_protocol)
         from ..dsh_bridge.token_speed import SpeedRun
         from comfy_execution.graph_utils import ExecutionBlocker
         started = time.monotonic()
@@ -190,7 +208,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
             preparation_finished = time.monotonic()
             progress = []
             def observe(event):
-                progress.append({"event": event, "phase": "reverse",
+                progress.append({"event": event, "phase": speed.phase,
                     "agent_elapsed_seconds": round(time.monotonic() - preparation_finished, 3)})
                 if event in ("step/start", "assistant/message", "tool/call", "tool/result", "turn/end"):
                     print(f"[DSH] {progress[-1]['agent_elapsed_seconds']}s {event}", flush=True)
@@ -207,24 +225,40 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 "video_sheet_images": len(sheets), "total_images": len(refs) + len(sheets),
                 "frame_coverage": report.get("coverage", {})}
             audit_file.write_text(json.dumps(prepared_record, ensure_ascii=False) + "\n", encoding="utf-8")
-            # Preparation has copied the source into this job's private workspace.
-            # Only now release the original VIDEO to downstream consumers: their
-            # decoding/seeking cannot race with staging a shared file-like source.
-            video_outputs = (video, *[ExecutionBlocker(None) for _ in range(4)]) if publish_video else tuple(
-                ExecutionBlocker(None) for _ in range(5))
+            # Full-source frames/transcript are prepared before the reference is trimmed.
+            from ..dsh_bridge.a_reference_video import prepare_a_reference
+            reference_video, reference_record = prepare_a_reference(video, output, report["video"], timeout_s)
+            if reference_record["trimmed"]:
+                media_text += ("\n\n【链路A参考视频长度】反推仍覆盖上面完整原片与全部抽帧、音轨证据。"
+                    "交给生成模型的参考视频仅保留前30秒，后续原片内容仍须通过本次提示词描述，不因参考视频裁短而删减反推内容。")
+                bridge.cfg["video_media_evidence"] = media_text
+                prepared_record["media_evidence_characters"] = len(media_text)
+                prepared_record["media_evidence_sha256"] = hashlib.sha256(media_text.encode("utf-8")).hexdigest()
+                audit_file.write_text(json.dumps(prepared_record, ensure_ascii=False) + "\n", encoding="utf-8")
+            # Both A entry node types expose the bounded reference via video1.
+            video_outputs = (reference_video, *[ExecutionBlocker(None) for _ in range(4)])
             yield ("", json.dumps({"chain": "A", "chain_status": "prepared",
-                   "video_outputs": {"count": 1 if publish_video else 0,
-                                     "plan_origin": "chain_a_original_video", "split_required": False}}, ensure_ascii=False),
-                   "链路A原视频已就绪；video1可直接处理或保存，提示词由独立反推节点输出", *video_outputs)
+                   "video_outputs": reference_record}, ensure_ascii=False),
+                   "链路A参考视频已就绪（最长30秒）；反推仍分析完整原片", *video_outputs)
             speed.phase = 'reverse'
             before_agent = time.monotonic()
             answer = bridge.ask(bridge.session_id("full-video"), requirement + "\n\n" + media_text, refs + sheets,
                                 timeout=timeout_s, on_progress=observe)
             agent_finished = time.monotonic()
-            compliance = {"input_mode": "exact_two_textboxes_with_media_evidence", "review_turns": 0,
-                "review_seconds": 0.0, "rules_characters": len(rules_text),
+            from ..dsh_bridge.a_review import final_review
+            print("[DSH] A反推完成，正在按「链路A：审核规定」进行最终审核", flush=True)
+            final_text, review_record = final_review(draft=answer["text"], requirement=requirement,
+                reverse_rules=rules_text, review_rules=chain_a_review_rules_text, media_text=media_text,
+                analysis_evidence=evidence(output), images=refs + sheets, reviewer=reviewer,
+                ai_mode=(review_ai or {}).get("review_ai", "沿用当前AI"), speed=speed, audit_dir=audit_dir,
+                result_dir=bridge_data_dir() / "a-results" / speed.run_id,
+                timeout_s=timeout_s - (time.monotonic() - before_agent), max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort, stream_usage=stream_usage, on_progress=observe)
+            compliance = {"input_mode": "exact_two_textboxes_with_media_evidence", "review_turns": 1,
+                "review_seconds": review_record["seconds"], "rules_characters": len(rules_text),
                 "rules_sha256": hashlib.sha256(rules_text.encode("utf-8")).hexdigest(),
-                "format_check": "not_requested", "semantic_check": "not_requested"}
+                "review_rules_sha256": hashlib.sha256(chain_a_review_rules_text.encode("utf-8")).hexdigest(),
+                "format_check": "passed", "semantic_check": "passed", "review": review_record}
             records = evidence(output)
             records["chain"] = "A"
             records["chain_status"] = "completed"
@@ -232,12 +266,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
             records["reference_image_slots"] = slots
             records["media_input"] = {"prepared": True, "sent_to_ai": True,
                 "text": media_text, "reference_images": len(refs), "video_sheet_images": len(sheets)}
-            records["video_outputs"] = {"count": 0, "segments": [], "ai_plan_submitted": False,
-                "plan_origin": "chain_a_no_output", "encoding_seconds": [],
-                "storage": "none; no VIDEO output for chain A"}
-            if publish_video:
-                records["video_outputs"].update(count=1, plan_origin="chain_a_original_video",
-                    split_required=False, storage="original VIDEO passed through video1; saving is handled by downstream nodes")
+            records["video_outputs"] = reference_record
             records["output_compliance"] = compliance
             records["reasoning_effort"] = {"selected": reasoning_effort,
                 "requested": None if reasoning_effort == "auto" else reasoning_effort}
@@ -247,19 +276,21 @@ class DSH_FullVideoAgent(io.ComfyNode):
             records["agent_tool_calls"] = [e["data"]["name"] for e in answer["events"] if e.get("type") == "tool/call"]
             records["finish_reason"] = answer.get("finish_reason")
             records["usage"] = answer.get("usage")
+            records["review_usage"] = review_record["usage"]
+            records["usage_by_stage"] = {"reverse": answer.get("usage"), "review": review_record["usage"]}
             records['token_speed'] = {**speed.snapshot(), 'status': 'completed'}
             records["agent_progress"] = progress
             records["usage_by_round"] = [(e.get("data") or {}).get("usage") or {} for e in answer["events"]
                                          if e.get("type") == "assistant/message"]
             records["timings"] = {"before_agent_seconds": round(before_agent - started, 3),
                 "agent_seconds": round(agent_finished - before_agent, 3),
-                "output_review_seconds": 0.0,
+                "output_review_seconds": review_record["seconds"],
                 "preparation_seconds": round(preparation_finished - started, 3),
                 "segment_planning_seconds": 0.0, "video_output_seconds": 0.0,
-                "video_encoding_seconds": 0.0, "video_agent_overlap_seconds": 0,
+                "video_encoding_seconds": round(sum(reference_record["encoding_seconds"]), 3), "video_agent_overlap_seconds": 0,
                 "total_seconds": round(time.monotonic() - started, 3)}
-            status = "ok" if answer["text"].strip() else "未返回提示词"
+            status = "ok" if final_text.strip() else "未返回提示词"
             if observer:
                 observer("finished", bridge, output)
-            return (answer["text"], json.dumps(records, ensure_ascii=False, indent=2), status,
+            return (final_text, json.dumps(records, ensure_ascii=False, indent=2), status,
                     *video_outputs)

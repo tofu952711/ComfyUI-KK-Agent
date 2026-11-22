@@ -191,7 +191,7 @@ async def run():
         print("B_SEGMENT_COORDINATOR_CHILDREN_REVIEW_AUDIO_BINDINGS_NO_AUDIO_CONTENT_OK")
     # A releases its original video before the single deferred inference call.
     if not args.reverse_fails:
-        a_gateway=PreparedGateway(final_texts=["A只反推一次"])
+        a_gateway=PreparedGateway(final_texts=["A只反推一次", json.dumps({"status":"approved","checks":{"consistent":True},"issues":[],"edits":[]})])
         try:
             from fractions import Fraction
             import torch
@@ -208,7 +208,7 @@ async def run():
             passed=await original_reverse.execute(a_result.result[8])
             assert a_result.result[0]=="" and passed.result[0]=="A只反推一次"
             assert (await original_reverse.execute(a_result.result[8])).result[0]=="A只反推一次"
-            assert len(a_gateway.requests)==1
+            assert len(a_gateway.requests)==2
             print("STAGED_A_RULES_ISOLATED_NO_REPEATED_AI_OK")
         finally:
             a_gateway.close()

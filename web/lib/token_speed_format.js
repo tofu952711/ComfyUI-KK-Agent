@@ -8,7 +8,7 @@ export function formatTokenSpeed(data, timestamp = Date.now()) {
   const last = finished.at(-1);
   const running = data.status === 'running';
   const extra = running ? Math.max(0, timestamp / 1000 - data.updated_at) : 0;
-  const title = running ? '运行中' : data.status === 'completed' ? '已完成' : '已停止 / 失败';
+  const title = running ? '运行中' : data.status === 'completed' ? '已完成' : data.status === 'cancelled' ? '已取消' : '已停止 / 失败';
   const lines = [`Token速度 · ${title} · ${data.model || ''}`];
   lines.push(`请求平均 ${number(data.average_tps, 2)} tok/s · 有效 ${number(data.effective_tps, 2)} tok/s`);
   lines.push(`已知输出 ${data.output_tokens ?? '—'} token · 总用时 ${number(data.task_seconds + extra)}s · 失败请求 ${data.failed_requests || 0}`);
