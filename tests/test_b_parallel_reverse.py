@@ -11,7 +11,7 @@ import pytest
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
 from test_video_preparation import staged
-from b_parallel_gateway import BParallelGateway, SHARED
+from b_parallel_gateway import BParallelGateway, SHARED, planned_shared
 from dsh_bridge import b_parallel_reverse as module
 from dsh_bridge.b_segment_media import prepare_segment_bundle, SegmentMediaTools
 from dsh_bridge.video_preparation import prepare_video
@@ -23,6 +23,17 @@ def configure(bridge, speed, audit, system, user, evidence, phase, images):
     bridge.cfg.update(_token_monitor=speed, _request_audit_file=str(audit),
                       video_prompt_only=True, video_exact_inputs=True,
                       video_system_prompt=system, video_user_prompt=user, video_media_evidence=evidence)
+
+
+def test_coordinator_parser_preserves_plan_and_rejects_unallocated_segments():
+    segments = [{"start": 0, "end": 24.858192}, {"start": 24.858192, "end": 54.98832165498832}]
+    contract = planned_shared(segments)
+    assert module.parse_shared_context(json.dumps(contract), segments) == contract
+    assert module.parse_shared_context("```json\n" + json.dumps(contract) + "\n```", segments) == contract
+    with pytest.raises(RuntimeError, match="分段表达计划未覆盖"):
+        module.parse_shared_context(json.dumps({**contract, "分段表达计划": contract["分段表达计划"][:1]}), segments)
+    with pytest.raises(RuntimeError, match="全片营销策略"):
+        module.parse_shared_context(json.dumps(SHARED), segments)
 
 
 def arguments(staged, count, tmp_path, monkeypatch):
@@ -44,9 +55,11 @@ def arguments(staged, count, tmp_path, monkeypatch):
                 configure_stage=configure, audit_dir=audit_dir)
 
 
-@pytest.mark.parametrize("protocol,count", [("openai-completions", 2), ("codez", 2), ("codez", 4)])
-def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp_path, monkeypatch, protocol, count):
+@pytest.mark.parametrize("protocol,count,max_tokens", [
+    ("openai-completions", 2, 60000), ("codez", 2, 4096), ("codez", 4, 65536)])
+def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp_path, monkeypatch, protocol, count, max_tokens):
     kwargs = arguments(staged, count, tmp_path, monkeypatch)
+    kwargs["max_tokens"] = max_tokens
     custom = protocol == "codez" and count == 4
     custom_checks = {"台词与表演说明一致": True, "促销信息有依据": True, "素材数量正确": True}
     if custom:
@@ -65,14 +78,21 @@ def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp
         assert len(gateway.coordinator_requests) == 1
         assert len(gateway.worker_requests) == count * 2  # Each does a real scoped get_frames call.
         assert record["agent_count"] == count
-        assert record["shared_context"] == SHARED
+        assert record["shared_context"] == planned_shared(kwargs["video_record"]["segments"])
         assert record["sum_child_seconds"] > record["parallel_wall_seconds"]
         assert [r["segment_index"] for r in record["segments"]] == list(range(1, count + 1))
-        assert [text.index(f"## 第{i}段提示词") for i in range(1, count + 1)] == sorted(
-            text.index(f"## 第{i}段提示词") for i in range(1, count + 1))
+        assert [text.index(f"第{i}段完整正文") for i in range(1, count + 1)] == sorted(
+            text.index(f"第{i}段完整正文") for i in range(1, count + 1))
+        assert "## 第" not in text and "局部时间归零" not in text
+        assert text.count("\n\n\n\n丨\n\n\n\n") == count - 1
         assert len({r["segment_index"] for r in requests if r.get("b_agent_role") == "segment"}) == count
         assert len(audits) == count + 2
         assert len(gateway.review_requests) == 1
+        # Check actual wire requests: coordinator, workers and final review must
+        # use the node value, including values above the former 8192 cap.
+        for body in gateway.requests:
+            limit = body.get("max_output_tokens") if protocol == "codez" else body.get("max_tokens")
+            assert limit == max_tokens, body.keys()
         assert record["review"]["status"] == "approved"
         assert set(record["review"]["checks"]) == set(custom_checks if custom else CHECKS)
         review_body = gateway.review_requests[0]
@@ -86,6 +106,12 @@ def test_real_isolated_agents_overlap_and_keep_rules_and_tool_images(staged, tmp
             rules = body["instructions"] if protocol == "codez" else next(
                 m["content"] for m in body["messages"] if m["role"] == "system")
             assert rules == kwargs["reverse_rules"]
+            messages = body["input"] if protocol == "codez" else body["messages"]
+            user_texts = [block["text"] for msg in messages if msg.get("role") == "user"
+                          for block in msg["content"] if block["type"] in ("text", "input_text")]
+            assigned = user_texts[0].split("【本段表达职责，按主AI全片计划执行】\n", 1)[1].split("\n", 1)[0]
+            assert json.loads(assigned) == record["shared_context"]["分段表达计划"][index - 1]
+            assert '"全片营销策略"' in user_texts[1] and '"分段表达计划"' in user_texts[1]
             assert (body["reasoning"]["effort"] if protocol == "codez" else body["reasoning_effort"]) == "high"
         for file in audits.values():
             outgoing = [json.loads(l) for l in Path(file).read_text(encoding="utf-8").splitlines()]
@@ -161,7 +187,7 @@ def test_timeout_cancels_running_b_agents_and_waits_for_cleanup(staged, tmp_path
             def session_id(self, label): return label
             def ask(self, *args, **kw):
                 if "主AI" in self.cfg["video_system_prompt"]:
-                    return {"text": json.dumps(SHARED), "usage": {}}
+                    return {"text": json.dumps(planned_shared(kwargs["video_record"]["segments"])), "usage": {}}
                 with lock: active.add(self)
                 while not getattr(self, "cancelled", False): time.sleep(.01)
                 raise RuntimeError("cancelled mock")

@@ -78,7 +78,7 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
                       segment_rules_text="", reasoning_effort="high", stream_usage=True,
                       image1=None, image2=None, image3=None, image4=None, image5=None,
                       image6=None, image7=None, image8=None, image9=None, image10=None,
-                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None):
+                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None, audio1=None, audio2=None, audio3=None):
         routing = route_duration(video.get_duration())
         print(f"[DSH] 并行入口：{routing['duration_seconds']}秒 → 链路{routing['chain']}", flush=True)
         images = (image1,image2,image3,image4,image5,image6,image7,image8,image9,image10)
@@ -86,11 +86,11 @@ class DSH_VideoSegments(DSH_FullVideoAgent):
             stages = cls.iter_chain_a(video, routing,
                 api_key,base_url,model,requirement,rules_text,timeout_s,max_tokens,
                 asr_model_dir,api_protocol,reasoning_effort,stream_usage,_observer,images,
-                publish_video=True)
+                publish_video=True, audio_values=(audio1, audio2, audio3))
         else:
             stages = iter_chain_b(cls, video,routing,api_key,base_url,model,requirement,
                 segment_rules_text,chain_b_reverse_rules_text,timeout_s,max_tokens,
-                asr_model_dir,api_protocol,reasoning_effort,stream_usage,keep_audio,_observer,images,chain_b_review_rules_text,review_ai)
+                asr_model_dir,api_protocol,reasoning_effort,stream_usage,keep_audio,_observer,images,chain_b_review_rules_text,review_ai,(audio1,audio2,audio3))
         try:
             result = await asyncio.to_thread(next, stages)
         except BaseException:

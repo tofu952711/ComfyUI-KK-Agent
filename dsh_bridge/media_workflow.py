@@ -67,7 +67,7 @@ MEDIA_BRIEF = """本次素材：@视频1为原视频，@图片1为人物参考�
 
 def evidence(output):
     result = {}
-    for name in ("shot_candidates.json", "transcript.json", "voice_evidence.json", "speaker_evidence.json", "preparation.json", "video_segments.json", "segment_request.json", "duration_policy.json"):
+    for name in ("shot_candidates.json", "transcript.json", "voice_evidence.json", "speaker_evidence.json", "audio_binding_evidence.json", "preparation.json", "video_segments.json", "segment_request.json", "duration_policy.json"):
         path = output / name
         if path.exists():
             result[name] = json.loads(path.read_text(encoding="utf-8"))

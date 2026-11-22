@@ -9,6 +9,14 @@ FIELDS = ("全片内容概要", "人物与服装", "商品与适配", "场景与
 SHARED = {key: f"统一设定：{key}" for key in FIELDS}
 
 
+def planned_shared(segments):
+    return {**SHARED, "全片营销策略": "按原片故事和实际分段推进购买理由，不重新开场。",
+            "分段表达计划": [
+                {"segment_index": i, **segment, "本段职责": f"职责{i}", "重点卖点": f"卖点{i}",
+                 "台词推进": f"信息{i}", "承接与去重": f"不重复其他段的完整话术，推进第{i}段信息"}
+                for i, segment in enumerate(segments, 1)]}
+
+
 class BParallelGateway:
     def __init__(self, segments, protocol="openai-completions", fail_segment=None,
                  on_coordinator=None, fail_coordinator=False, review_response=None, child_texts=None, review_only=False, expected_api_key=None):
@@ -64,7 +72,7 @@ class BParallelGateway:
                         outer.coordinator_requests.append(body)
                         if on_coordinator:
                             on_coordinator()
-                        text = "无效JSON" if fail_coordinator else json.dumps(SHARED, ensure_ascii=False)
+                        text = "无效JSON" if fail_coordinator else json.dumps(planned_shared(segments), ensure_ascii=False)
                     elif match:
                         index = int(match[1])
                         with outer.lock:

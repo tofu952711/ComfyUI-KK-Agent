@@ -13,6 +13,7 @@ from pathlib import Path
 import time
 
 from .media_tools import MediaTools
+from .reference_audio import audio_binding_text
 
 
 def sampling_plan(info, shots):
@@ -164,6 +165,7 @@ def prepared_evidence_text(report, shots, transcript, image_slots=None):
         "候选切点：" + json.dumps(shots["candidate_cuts"], ensure_ascii=False),
         "音轨自动转写：" + json.dumps(transcript, ensure_ascii=False),
         "声音变化复核证据：" + json.dumps(report.get("voice_evidence", {}), ensure_ascii=False),
+        audio_binding_text(report),
     ]
     for index, sheet in enumerate(report["sheets"], len(slots) + 1):
         text.append(f"随请求第{index}张图：{sheet['kind']}；{sheet['layout']}；原视频秒数：" +
@@ -199,6 +201,7 @@ def initial_request(output: Path, report, shots, transcript, requirement="", rul
             "候选切点：" + json.dumps(shots["candidate_cuts"], ensure_ascii=False),
             "音轨自动转写：" + json.dumps(transcript, ensure_ascii=False),
             "声音变化复核证据：" + json.dumps(report.get("voice_evidence", {}), ensure_ascii=False),
+        audio_binding_text(report),
             "声音复核方式：先对照声学变化、前后台词、口型和回应关系，再按本次反推规则判断说话身份与出镜/画外状态。"
             "不能仅因未提供说话人标签就把所有台词强制合成同一主播；也不能把每个音高变化当作新增人物。"
             "判断说话人数或区分多条声线时，优先调用diarize_speakers()取得模型估计、每人发言时间及音高/频谱指标；"

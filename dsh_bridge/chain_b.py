@@ -58,7 +58,7 @@ def configure_stage(bridge, speed, audit_file, system, user, media_text, phase, 
 
 def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
                 segment_rules, reverse_rules, timeout_s, max_tokens, asr_model_dir,
-                api_protocol, reasoning_effort, stream_usage, keep_audio, observer, image_values, review_rules=REVIEW_RULES, review_ai=None):
+                api_protocol, reasoning_effort, stream_usage, keep_audio, observer, image_values, review_rules=REVIEW_RULES, review_ai=None, audio_values=(None, None, None)):
     # Validate B's own rule fields before any preprocessing or API work.
     for value, label in ((segment_rules, "链路B：分段规定"), (reverse_rules, "链路B：反推提示词规定"),
                          (review_rules, "链路B：审核规定")):
@@ -76,7 +76,7 @@ def iter_chain_b(node, video, routing, api_key, base_url, model, requirement,
         audits = {phase: audit_dir / f"{speed.run_id}-b-{phase}.jsonl" for phase in ("segment", "reverse")}
         from .b_video_preparation import prepare_b_chain_media
         output, report, slots, refs, sheets, media_text = prepare_b_chain_media(
-            segment_bridge.cfg, video, routing, asr_model_dir, image_values)
+            segment_bridge.cfg, video, routing, asr_model_dir, image_values, audio_values)
         tools = MediaTools(output.parent / "source-video.mp4", output, Path(segment_bridge.cfg["media_model_dir"]))
         tools._write_json("duration_policy.json", {**routing, "phase": "segment",
             "keep_audio": bool(keep_audio), "tool_timeout_s": timeout_s})

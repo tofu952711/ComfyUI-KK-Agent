@@ -19,6 +19,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--comfy-root", required=True, type=Path)
 parser.add_argument("--reverse-fails", action="store_true")
 parser.add_argument("--file-like", action="store_true")
+parser.add_argument("--audio-bindings", action="store_true")
 args = parser.parse_args()
 ROOT = Path(__file__).resolve().parents[1]
 job = tempfile.TemporaryDirectory(prefix="dsh-a-scheduler-")
@@ -60,6 +61,11 @@ events = []
 def on_request(body, index):
     assert index == 1, "A must not split or repeat inference"
     assert all(not tool["function"]["name"].endswith("set_video_segments") for tool in body["tools"])
+    if args.audio_bindings:
+        wire=json.dumps(body,ensure_ascii=False)
+        assert all(f"音频{i}绑定模特{i}" in wire for i in (1,2,3))
+        assert "input_audio" not in wire and "waveform" not in wire
+        print("A_THREE_AUDIO_BINDINGS_SENT_WITHOUT_AUDIO_CONTENT_OK")
     started.set()
     assert saved.wait(20), "Video processing/save did not run during model inference"
 
@@ -89,6 +95,15 @@ class Source(io.ComfyNode):
     @classmethod
     def execute(cls):
         return io.NodeOutput(source_video)
+
+
+class AudioReferenceSource(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(node_id="AudioReferenceSource",inputs=[],outputs=[io.Audio.Output()])
+    @classmethod
+    def execute(cls):
+        return io.NodeOutput({"do_not_inspect_or_transcribe": True})
 
 
 class UnusedBReview(io.ComfyNode):
@@ -137,7 +152,7 @@ class CheckedSave(SaveVideo):
 
 
 nodes.NODE_CLASS_MAPPINGS.update(pkg.NODE_CLASS_MAPPINGS)
-nodes.NODE_CLASS_MAPPINGS.update(ASource=Source, AProcessVideo=ProcessVideo, SaveVideo=CheckedSave, UnusedBReview=UnusedBReview)
+nodes.NODE_CLASS_MAPPINGS.update(ASource=Source, AProcessVideo=ProcessVideo, SaveVideo=CheckedSave, UnusedBReview=UnusedBReview, AudioReferenceSource=AudioReferenceSource)
 stage = pkg.NODE_CLASS_MAPPINGS["DSH_VideoSegments"]
 stage.GET_SCHEMA()
 graph = {
@@ -159,6 +174,11 @@ graph = {
         "filename_prefix": "unused", "format": "mp4", "format.codec": "h264"}},
 }
 
+
+if args.audio_bindings:
+    for i in (1,2,3):
+        graph[f"audio_source{i}"]={"class_type":"AudioReferenceSource","inputs":{}}
+        graph["stage"]["inputs"][f"audio{i}"]=[f"audio_source{i}",0]
 
 async def run():
     valid = await validate_prompt("a-overlap-test", graph, None)

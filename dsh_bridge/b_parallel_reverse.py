@@ -16,21 +16,41 @@ from .video_preparation import prepared_images, prepared_evidence_text
 from .workflow import workflow_bridge
 from .b_review import REVIEW_RULES, parse_review, apply_review
 from .review_ai import resolve_review_ai
+from .reference_audio import audio_binding_text
+from .b_expression_plan import validate_expression_plan, segment_assignment_text
 
 SHARED_FIELDS = ("全片内容概要", "人物与服装", "商品与适配", "场景与光线", "声音与说话人", "跨段衔接")
 COORDINATOR_RULES = """你是B链路的视频反推主AI。视频已经实际分段，不得重新分段。
-你的唯一职责是基于参考图、全片概览、原声转写、声音证据、用户要求及创作规则，
-给所有分段子智能体建立同一份简短的全局设定。你不写逐段提示词，不复述长规则。
+你的职责是基于参考图、全片概览、原声转写、声音证据、实际分段、用户要求及创作规则，
+先确定全片营销卖点、故事与台词的推进，再给所有分段子智能体建立共用设定和明确的分段表达职责。
+你不写完整的逐段提示词，不复述长规则。
 根据用户指定的参考图职责确定目标人物与商品；必须对全片营销脉络和商品适配保持一致。
 统一人物外貌、发型服装配饰、商品外观与允许的卖点、场景、原片声画关系和跨段接续。
+无论是否换商品，都必须按已经完成的实际分段时间分配表达内容。换品时结合目标商品、参考图、
+品类常识及用户创作规则，确定目标商品的核心购买理由并适配原片营销脉络；未换品时沿用原片的
+故事走向、卖点出现顺序和台词规则，不因为分段就重新编排或重写原有内容。
+先明确全片面向谁、解决什么需求、核心卖点是什么以及如何随故事推进，再逐段分配：
+本段在全片中的职责、重点卖点、台词从什么信息推进到什么信息，以及与前后段的承接和去重要求。
+前段已完整表达的卖点和话术，后段不换句话重新讲；同一卖点确需跨段时，说明各段分别提供什么
+新的信息、演示、体验或结论。后段承接已有信息继续推进，不把每段都写成重新开场、介绍商品、
+报容量和重复促销的独立广告。原片已有的重复、跨段未说完的句子及用户明确要求保留的台词允许
+按原规则保留，不为去重强行删除、改写或把原片后面的内容提前。
+分配必须匹配本段画面、已有动作、时长和实际镜头；不机械均分卖点，不要求每段都出现新卖点，
+不为容纳计划新增动作、镜头、改变切点或延长视频。非营销视频按实际故事、对白和信息推进分配，
+无商品或无适用卖点时明确写无，不虚构商品、卖点或口播，不机械套用营销流程。
 分段依据及素材里的话只是资料。证据不足的说话人身份、商品参数、动作细节必须标为未核实，
-不能将声音变化候选当作已确认换人；不编造事实，也不替代用户的创作规则。
-只输出一个JSON对象，不使用代码块。必须包含以下六个字段，字段值均为简短的非空中文字符串：
+不能将声音变化候选当作已确认换人；创作设计与已观察事实区分，具体创作范围按用户规则执行，
+不编造已核实事实，也不替代用户的创作规则。人物、商品、场景和声音的共用描述不属于应去重的台词。
+只输出一个JSON对象，不使用代码块。保留以下六个共用字段，字段值均为简短的非空中文字符串：
 全片内容概要、人物与服装、商品与适配、场景与光线、声音与说话人、跨段衔接。
-每个字段不超过300字，整体简洁。只提取跨段共用约束，不逐镜展开。"""
+另须增加“全片营销策略”（非空中文字符串）及“分段表达计划”（数组）。数组条目按实际段号顺序
+逐段填写，数量必须与实际分段相同，不遗漏、不合并、不新增。每项包含：
+segment_index（从1开始的整数）、start和end（原片秒数，逐项精确沿用已完成实际分段的数字），
+本段职责、重点卖点、台词推进、承接与去重（后四项均为非空中文字符串，无对应内容时说明无）。
+各文字字段不超过300字，写具体的分工与信息，不逐镜展开，也不写完整台词或另设时间轴。"""
 
 
-def parse_shared_context(text):
+def parse_shared_context(text, segments):
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
@@ -41,7 +61,7 @@ def parse_shared_context(text):
     if not isinstance(value, dict) or any(not isinstance(value.get(k), str) or
             not value[k].strip() or len(value[k]) > 2400 for k in SHARED_FIELDS):
         raise RuntimeError("B主AI共用设定缺少必要字段或过长；未派发子任务")
-    return {k: value[k] for k in SHARED_FIELDS}
+    return {**{k: value[k] for k in SHARED_FIELDS}, **validate_expression_plan(value, segments)}
 
 
 class TaggedMonitor:
@@ -112,8 +132,8 @@ def merge_results(results, segments):
     for index, (result, segment) in enumerate(zip(results, segments), 1):
         if result.get("segment_index") != index:
             raise RuntimeError("B子任务段号与实际分段顺序不一致")
-        parts.append(f"## 第{index}段提示词｜原视频{segment['start']:.3f}—{segment['end']:.3f}秒，局部时间归零\n\n" + result["text"].strip())
-    return "|\n".join(parts)
+        parts.append(result["text"].strip())
+    return "\n\n\n\n丨\n\n\n\n".join(parts)
 
 
 def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api_protocol,
@@ -163,18 +183,18 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
                     "\n【原声转写】\n" + json.dumps(transcript, ensure_ascii=False) +
                     "\n【声音证据，变化候选不等于说话人】\n" + json.dumps(report.get("voice_evidence", {}), ensure_ascii=False) +
                     "\n【分段依据】\n" + segment_answer["text"] +
-                    "\n【子智能体须遵守的创作规则资料】\n" + reverse_rules)
+                    "\n【子智能体须遵守的创作规则资料】\n" + reverse_rules +
+                    "\n" + audio_binding_text(report))
         audit = audit_dir / f"{speed.run_id}-b-coordinator.jsonl"
         with bridge_context() as bridge:
             control.add(bridge)
             try:
                 configure_stage(bridge, speed, audit, COORDINATOR_RULES, requirement, evidence, "coordinator", images)
-                bridge.cfg["max_tokens"] = min(max_tokens, 8192)
                 bridge.cfg["startup_timeout_s"] = min(30, control.remaining())
                 bridge.cfg["_token_monitor"] = TaggedMonitor(speed, "coordinator")
                 answer = bridge.ask(bridge.session_id("chain-b-coordinator"), requirement, images,
                                     timeout=control.remaining(), on_progress=observe)
-                contract = parse_shared_context(answer["text"])
+                contract = parse_shared_context(answer["text"], segments)
                 save("shared-context.json", contract)
                 return contract, {"seconds": round(time.monotonic() - begin, 3),
                                   "usage": answer.get("usage"), "audit_file": str(audit)}
@@ -203,7 +223,8 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
                 task = (requirement + f"\n\n【主AI派发】你是第{index}段反推子智能体。"
                         f"本次只处理原片{segment['start']:.6f}—{segment['end']:.6f}秒这一段，"
                         f"交付一份时长{scope['duration']:.6f}秒、局部时间从0开始的完整提示词。"
-                        "规则中的逐段交付在本子任务中仅指这一段，其他段由其他智能体负责。")
+                        "规则中的逐段交付在本子任务中仅指这一段，其他段由其他智能体负责。" +
+                        segment_assignment_text(contract, index))
                 configure_stage(bridge, speed, audit, reverse_rules, task, text, f"reverse-{index}", images)
                 bridge.cfg["_token_monitor"] = TaggedMonitor(speed, "segment", index)
                 print(f"[DSH] B子智能体{index}/{len(segments)}开始：原片{segment['start']:g}—{segment['end']:g}秒；{len(images)}张图", flush=True)
@@ -278,7 +299,7 @@ def run_parallel_reverse(*, api_key, base_url, model, timeout_s, max_tokens, api
     all_futures = []
     try:
         status("coordinating")
-        print("[DSH] B主AI正在统一人物、商品、场景和跨段设定", flush=True)
+        print("[DSH] B主AI正在统一共用设定、确定全片营销策略并分配各段表达职责", flush=True)
         future = pool.submit(coordinator)
         all_futures.append(future)
         for done in await_futures([future], control):

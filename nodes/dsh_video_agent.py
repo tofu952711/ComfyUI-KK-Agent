@@ -70,7 +70,10 @@ class DSH_FullVideoAgent(io.ComfyNode):
                                      io.String.Input("base_url", default="", display_name="审核 Base URL"),
                                      io.String.Input("model", default="", display_name="审核模型"),
                                      io.Combo.Input("api_protocol", options=["openai-completions", "deepseek-messages", "codez"],
-                                                    default="openai-completions", display_name="审核接口协议")])])],
+                                                    default="openai-completions", display_name="审核接口协议")])]),
+                    *[io.Audio.Input(f"audio{index}", optional=True, display_name=f"音频{index}",
+                                     tooltip=f"可选：接入后告知AI‘音频{index}绑定模特{index}’。只检测有无输入，不分析音频；A/B均生效。")
+                      for index in range(1, 4)]],
             outputs=[io.String.Output(display_name="提示词"), io.String.Output(display_name="分析证据"), io.String.Output(display_name="状态"),
                      *[io.Video.Output(display_name=f"video{index}") for index in range(1, 6)]])
 
@@ -94,7 +97,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                       api_protocol="deepseek-messages", rules_text="", keep_audio=True, segment_rules_text="", reasoning_effort="high", stream_usage=True,
                       image1=None, image2=None, image3=None, image4=None, image5=None,
                       image6=None, image7=None, image8=None, image9=None, image10=None,
-                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None):
+                      chain_b_reverse_rules_text="", chain_b_review_rules_text=REVIEW_RULES, review_ai=None, audio1=None, audio2=None, audio3=None):
         if video is None:
             raise ValueError("请连接原视频，脚本需要检测时长后选择链路")
         # Dispatch happens before credentials, prompts, references or media staging.
@@ -107,15 +110,15 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 cls.run_chain_b, video, routing, api_key, base_url, model, requirement,
                 segment_rules_text, chain_b_reverse_rules_text, timeout_s, max_tokens,
                 asr_model_dir, api_protocol, reasoning_effort, stream_usage, keep_audio,
-                _observer, image_values, chain_b_review_rules_text, review_ai))
+                _observer, image_values, chain_b_review_rules_text, review_ai, (audio1, audio2, audio3)))
         result = await asyncio.to_thread(cls.run_chain_a, video, routing,
             api_key, base_url, model, requirement, rules_text, timeout_s, max_tokens,
             asr_model_dir, api_protocol, reasoning_effort, stream_usage, _observer,
-            image_values)
+            image_values, (audio1, audio2, audio3))
         return io.NodeOutput(*result)
 
     @classmethod
-    def prepare_chain_media(cls, cfg, video, routing, asr_model_dir, image_values):
+    def prepare_chain_media(cls, cfg, video, routing, asr_model_dir, image_values, audio_values=(None, None, None)):
         """The default material bundle is identical for A and B."""
         output = configure_media_config(cfg, video, asr_model_dir)
         tools = MediaTools(output.parent / "source-video.mp4", output, Path(cfg["media_model_dir"]))
@@ -129,6 +132,8 @@ class DSH_FullVideoAgent(io.ComfyNode):
             refs.append(tensor_to_base64(image, max_side=1568))
         print(f"[DSH] 链路{routing['chain']}：正在本地预处理视频和音轨转写", flush=True)
         report, shots, transcript = prepare_video(output, Path(cfg["media_model_dir"]))
+        from ..dsh_bridge.reference_audio import attach_audio_bindings
+        attach_audio_bindings(audio_values, output, report)
         media_text = prepared_evidence_text(report, shots, transcript, slots)
         # Both current and future chain requests receive this explicit bundle.
         cfg["video_media_evidence"] = media_text
@@ -142,10 +147,10 @@ class DSH_FullVideoAgent(io.ComfyNode):
     @classmethod
     def run_chain_a(cls, video, routing, api_key, base_url, model, requirement,
                     rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
-                    reasoning_effort, stream_usage, observer, image_values):
+                    reasoning_effort, stream_usage, observer, image_values, audio_values=(None, None, None)):
         stages = cls.iter_chain_a(video, routing, api_key, base_url, model, requirement,
             rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
-            reasoning_effort, stream_usage, observer, image_values)
+            reasoning_effort, stream_usage, observer, image_values, audio_values=audio_values)
         try:
             next(stages)
             try:
@@ -159,7 +164,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
     @classmethod
     def iter_chain_a(cls, video, routing, api_key, base_url, model, requirement,
                      rules_text, timeout_s, max_tokens, asr_model_dir, api_protocol,
-                     reasoning_effort, stream_usage, observer, image_values, *, publish_video=False):
+                     reasoning_effort, stream_usage, observer, image_values, *, publish_video=False, audio_values=(None, None, None)):
         if not isinstance(rules_text, str) or not rules_text.strip():
             raise ValueError("请在第二个文本框「系统提示词（原Skill正文）」填写反推规则，或转为输入连接文本节点")
         from ..dsh_bridge.token_speed import SpeedRun
@@ -177,7 +182,7 @@ class DSH_FullVideoAgent(io.ComfyNode):
                 "video_exact_inputs": True, "video_system_prompt": rules_text,
                 "video_user_prompt": requirement})
             output, report, slots, refs, sheets, media_text = cls.prepare_chain_media(
-                bridge.cfg, video, routing, asr_model_dir, image_values)
+                bridge.cfg, video, routing, asr_model_dir, image_values, audio_values)
             tools = MediaTools(output.parent / "source-video.mp4", output, Path(bridge.cfg["media_model_dir"]))
             tools._write_json("duration_policy.json", {**routing, "phase": "reverse"})
             if observer:

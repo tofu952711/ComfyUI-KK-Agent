@@ -144,6 +144,7 @@ def prepare_segment_bundle(source_output, report, slots, index, segment, count, 
         (output / speaker_file.name).write_bytes(speaker_file.read_bytes())
     scoped_report = {"video": {**info, "assigned_segment": scope}, "sheets": sheets,
                      "voice_evidence": voices,
+                     **({"audio_bindings": report["audio_bindings"]} if report.get("audio_bindings") else {}),
                      "coverage": {"assigned_range": scope, "sheets": len(sheets)},
                      "note": "图上标签是原片秒数。区间外至多0.5秒的边界帧仅供衔接，不属于本段内容。"}
     text = ("【B链路子任务，当前只交付一段】\n" + json.dumps(scope, ensure_ascii=False) +

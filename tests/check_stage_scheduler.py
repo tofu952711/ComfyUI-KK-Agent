@@ -17,6 +17,7 @@ parser.add_argument("--comfy-root",required=True,type=Path)
 parser.add_argument("--reverse-fails",action="store_true")
 parser.add_argument("--review-linked",action="store_true")
 parser.add_argument("--custom-review-ai",action="store_true")
+parser.add_argument("--audio-bindings",action="store_true")
 args=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[1]
 job=tempfile.TemporaryDirectory(prefix="dsh-real-scheduler-")
@@ -67,6 +68,14 @@ class ReviewRulesSource(io.ComfyNode):
         events.append({"event":"review_rules_source_evaluated"})
         return io.NodeOutput(REVIEW_TEXT)
 
+class AudioReferenceSource(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(node_id="AudioReferenceSource",inputs=[],outputs=[io.Audio.Output()])
+    @classmethod
+    def execute(cls):
+        return io.NodeOutput({"do_not_inspect_or_transcribe": True})
+
 reverse_started=threading.Event()
 reverse_done=threading.Event()
 saved=threading.Event()
@@ -112,7 +121,7 @@ gateway=BParallelGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
 review_gateway = BParallelGateway(segments=[{"start":0,"end":16},{"start":16,"end":32}],
     protocol="codez",review_only=True,expected_api_key="local-review-key") if args.custom_review_ai else None
 nodes.NODE_CLASS_MAPPINGS.update(pkg.NODE_CLASS_MAPPINGS)
-nodes.NODE_CLASS_MAPPINGS.update(SchedulerSource=Source,SaveVideo=CheckedSaveVideo,DSH_VideoReverse=CheckedReverse,ReviewRulesSource=ReviewRulesSource)
+nodes.NODE_CLASS_MAPPINGS.update(SchedulerSource=Source,SaveVideo=CheckedSaveVideo,DSH_VideoReverse=CheckedReverse,ReviewRulesSource=ReviewRulesSource,AudioReferenceSource=AudioReferenceSource)
 # Match server discovery order: the original node is inspected before its subclass.
 full=pkg.NODE_CLASS_MAPPINGS["DSH_FullVideoAgent"]
 full.GET_SCHEMA()
@@ -139,6 +148,10 @@ if args.custom_review_ai:
     graph["segment"]["inputs"].update({"review_ai":"自定义", "review_ai.api_key":"local-review-key",
         "review_ai.base_url":review_gateway.url, "review_ai.model":"review-model",
         "review_ai.api_protocol":"codez"})
+if args.audio_bindings:
+    for i in (1,3):
+        graph[f"audio_source{i}"]={"class_type":"AudioReferenceSource","inputs":{}}
+        graph["segment"]["inputs"][f"audio{i}"]=[f"audio_source{i}",0]
 async def run():
     validation=await validate_prompt("scheduler-validation-test",graph,None)
     assert validation[0], validation
@@ -168,6 +181,14 @@ async def run():
         assert any(e["event"]=="review_rules_source_evaluated" for e in events)==args.review_linked
         print("STAGED_B_CUSTOM_REVIEW_RULES_SENT_EXACTLY_OK")
     print("REAL_COMFY_SCHEDULER_STOCK_SAVEVIDEO_OVERLAPS_REVERSE_OK",json.dumps(events))
+    if args.audio_bindings:
+        requests=gateway.requests+(review_gateway.requests if review_gateway else [])
+        for body in requests:
+            wire=json.dumps(body,ensure_ascii=False)
+            assert "音频1绑定模特1" in wire and "音频3绑定模特3" in wire
+            assert "音频2绑定模特2" not in wire
+            assert "input_audio" not in wire and "waveform" not in wire
+        print("B_SEGMENT_COORDINATOR_CHILDREN_REVIEW_AUDIO_BINDINGS_NO_AUDIO_CONTENT_OK")
     # A releases its original video before the single deferred inference call.
     if not args.reverse_fails:
         a_gateway=PreparedGateway(final_texts=["A只反推一次"])

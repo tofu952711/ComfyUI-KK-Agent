@@ -152,7 +152,7 @@ def prepare_b_video(output, model_dir=None):
     return report, shots, transcript
 
 
-def prepare_b_chain_media(cfg, video, routing, asr_model_dir, image_values):
+def prepare_b_chain_media(cfg, video, routing, asr_model_dir, image_values, audio_values=(None, None, None)):
     output = configure_media_config(cfg, video, asr_model_dir)
     tools = MediaTools(output.parent / "source-video.mp4", output, Path(cfg["media_model_dir"]))
     tools._write_json("duration_policy.json", {**routing, "phase": "prepared"})
@@ -165,6 +165,8 @@ def prepare_b_chain_media(cfg, video, routing, asr_model_dir, image_values):
         refs.append(tensor_to_base64(image, max_side=1568))
     print("[DSH] 链路B：正在本地预处理视频和音轨转写（不可解码片尾采样自动跳过）", flush=True)
     report, shots, transcript = prepare_b_video(output, Path(cfg["media_model_dir"]))
+    from .reference_audio import attach_audio_bindings
+    attach_audio_bindings(audio_values, output, report)
     text = prepared_evidence_text(report, shots, transcript, slots)
     cfg["video_media_evidence"] = text
     return output, report, slots, refs, prepared_images(output, report), text

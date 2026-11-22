@@ -48,7 +48,7 @@ assert full_inputs["optional"]["rules_text"][1]["default"] == ""
 assert full_inputs["optional"]["rules_text"][1]["lazy"]
 assert full_inputs["required"]["requirement"][1]["multiline"]
 widget_names = [name for group in ("required", "optional") for name, spec in full_inputs[group].items()
-                if name != "video" and not name.startswith("image")]
+                if name != "video" and not name.startswith(("image", "audio"))]
 assert widget_names == ["api_key", "base_url", "model", "requirement", "timeout_s", "max_tokens",
                         "asr_model_dir", "api_protocol", "rules_text", "keep_audio", "segment_rules_text", "chain_b_reverse_rules_text", "reasoning_effort", "stream_usage", "chain_b_review_rules_text", "review_ai"], widget_names
 review_options=full_inputs["optional"]["review_ai"][1]["options"]
@@ -66,6 +66,7 @@ assert full_inputs["optional"]["chain_b_reverse_rules_text"][1]["default"] == ""
 assert full_inputs["optional"]["chain_b_reverse_rules_text"][1]["lazy"]
 review_spec = full_inputs["optional"]["chain_b_review_rules_text"][1]
 assert review_spec["multiline"] and review_spec["lazy"] and "最终复核" in review_spec["default"]
+assert all(full_inputs["optional"][f"audio{i}"][0]=="AUDIO" for i in (1,2,3))
 assert full_inputs["optional"]["keep_audio"][1]["default"] is True
 assert all(f"image{i}" in full_inputs["optional"] for i in range(1, 11))
 assert "person" not in full_inputs["required"] and "product" not in full_inputs["required"]
